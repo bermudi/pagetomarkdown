@@ -1,246 +1,193 @@
-console.log('Content script loaded');
-
-// Make sure Readability is available
-if (typeof Readability === 'undefined') {
-    console.error('Readability is not defined!');
-}
-
-// Make sure Turndown is available
-if (typeof TurndownService === 'undefined') {
-    console.error('TurndownService is not defined!');
-}
-
-const turndownService = new TurndownService({
-    headingStyle: 'atx',
-    codeBlockStyle: 'fenced'
-});
-
-// Add custom rules for better Markdown conversion
-turndownService.addRule('figures', {
-    filter: 'figure',
-    replacement: function(content, node) {
-        console.log('Processing figure:', node);
-        const img = node.querySelector('img');
-        const caption = node.querySelector('figcaption');
-        if (img) {
-            const alt = img.getAttribute('alt') || '';
-            const src = img.getAttribute('src') || '';
-            const captionText = caption ? caption.textContent : '';
-            console.log('Figure processed:', { alt, src, captionText });
-            return `![${alt}](${src})\n${captionText}\n\n`;
-        }
-        return content;
+class AdvancedMarkdownConverter {
+    constructor() {
+        this.turndown = null;
+        this.initializeConverter();
+        this.setupListeners();
     }
-});
 
-// Store the clean metadata in a closure to prevent it from being affected by DOM cleanup
-let preservedMetadata = null;
-
-browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('Message received in content script:', message);
-    if (message.action === "convert") {
-        convertPageToMarkdown()
-        .then(markdownData => {
-            console.log('Conversion successful:', markdownData);
-            sendResponse({
-                success: true,
-                markdownContent: markdownData.content,
-                fileName: markdownData.fileName
-            });
-        })
-        .catch((error) => {
-            console.error('Error in convertPageToMarkdown:', error);
-            sendResponse({ success: false, error: error.message });
+    setupListeners() {
+        browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            if (message.action === "trigger_conversion") {
+                this.processPage();
+            }
         });
-        return true;
     }
-});
 
-async function convertPageToMarkdown() {
-    console.log('Starting conversion...');
-    try {
-        // First pass just for metadata extraction from pristine HTML
-        const metadataClone = document.implementation.createHTMLDocument();
-        const metadataDoc = document.documentElement.cloneNode(true);
-        metadataClone.documentElement.replaceWith(metadataDoc);
-
-        console.log('Creating Readability instance for metadata extraction...');
-        const metadataReader = new Readability(metadataClone, {
-            debug: true,
-            charThreshold: 20
-        });
-
-        const metadataArticle = metadataReader.parse();
-
-        // Store the clean metadata immediately after extraction
-        preservedMetadata = {
-            // Readability extracted
-            title: metadataArticle?.title,
-            byline: metadataArticle?.byline,
-            siteName: metadataArticle?.siteName,
-            excerpt: metadataArticle?.excerpt,
-
-            // OpenGraph
-            ogTitle: metadataDoc.querySelector('meta[property="og:title"]')?.content,
-            ogDescription: metadataDoc.querySelector('meta[property="og:description"]')?.content,
-            ogSiteName: metadataDoc.querySelector('meta[property="og:site_name"]')?.content,
-            ogType: metadataDoc.querySelector('meta[property="og:type"]')?.content,
-            ogImage: metadataDoc.querySelector('meta[property="og:image"]')?.content,
-
-            // Twitter Cards
-            twitterTitle: metadataDoc.querySelector('meta[name="twitter:title"]')?.content,
-            twitterDescription: metadataDoc.querySelector('meta[name="twitter:description"]')?.content,
-            twitterCreator: metadataDoc.querySelector('meta[name="twitter:creator"]')?.content,
-
-            // Schema.org JSON-LD
-            jsonLd: (() => {
-                try {
-                    const scripts = metadataDoc.querySelectorAll('script[type="application/ld+json"]');
-                    return Array.from(scripts).map(script => JSON.parse(script.textContent));
-                } catch (e) {
-                    console.error('Error parsing JSON-LD:', e);
-                    return [];
-                }
-            })(),
-
-            // Dublin Core
-            dcTitle: metadataDoc.querySelector('meta[name="DC.title"]')?.content,
-            dcCreator: metadataDoc.querySelector('meta[name="DC.creator"]')?.content,
-            dcDescription: metadataDoc.querySelector('meta[name="DC.description"]')?.content,
-            dcDate: metadataDoc.querySelector('meta[name="DC.date"]')?.content,
-
-            // Standard HTML metadata
-            metaDescription: metadataDoc.querySelector('meta[name="description"]')?.content,
-            metaAuthor: metadataDoc.querySelector('meta[name="author"]')?.content,
-            metaKeywords: metadataDoc.querySelector('meta[name="keywords"]')?.content,
-            canonicalUrl: metadataDoc.querySelector('link[rel="canonical"]')?.href,
-
-            // Publication date
-            publishDate: metadataDoc.querySelector('meta[property="article:published_time"]')?.content ||
-            metadataDoc.querySelector('time[pubdate]')?.getAttribute('datetime') ||
-            metadataDoc.querySelector('[class*="publish"],[class*="date"]')?.textContent
-        };
-
-        console.log('Extracted metadata:', preservedMetadata);
-
-        // Second clone for content
-        const documentClone = document.implementation.createHTMLDocument();
-        const doc = document.documentElement.cloneNode(true);
-        documentClone.documentElement.replaceWith(doc);
-
-        console.log('Creating Readability instance for content...');
-        const reader = new Readability(documentClone, {
-            debug: true,
-            charThreshold: 20,
-            keepClasses: false,
-            cleanConditionally: true,
-            removeEmpty: true
-        });
-
-        const article = reader.parse();
-        console.log('Content parsing complete');
-
-        if (!article) {
-            throw new Error('Could not parse page content');
+    initializeConverter() {
+        if (typeof TurndownService === 'undefined') {
+            console.error('TurndownService is not defined! Check manifest libraries.');
+            return;
         }
 
-        // Create a temporary container for the parsed content
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = article.content;
+        this.turndown = new TurndownService({
+            headingStyle: 'atx',
+            hr: '---',
+            bulletListMarker: '-',
+            codeBlockStyle: 'fenced',
+            fence: '```',
+            emDelimiter: '*',
+            strongDelimiter: '**',
+            linkStyle: 'inlined'
+        });
 
-        // Post-Readability cleanup
-        const postCleanup = (element) => {
-            // Remove empty elements
-            element.querySelectorAll('*').forEach(el => {
-                if (el.innerHTML.trim() === '') {
-                    console.log('Removing empty element post-parse:', el.outerHTML);
-                    el.remove();
+        // Add GitHub Flavored Markdown (GFM) tables if the plugin is available
+        // Note: You need to add turndown-plugin-gfm.js to lib/ and manifest for this to work
+        if (typeof turndownPluginGfm !== 'undefined') {
+            this.turndown.use(turndownPluginGfm.gfm);
+        }
+
+        this.addCustomRules();
+    }
+
+    addCustomRules() {
+        // Better code blocks
+        this.turndown.addRule('codeBlock', {
+            filter: ['pre'],
+            replacement: (content, node) => {
+                const code = node.querySelector('code');
+                let language = '';
+                if (code) {
+                    const className = code.className || '';
+                    const match = className.match(/language-(\w+)/);
+                    if (match) language = match[1];
                 }
-            });
+                return `\n\`\`\`${language}\n${node.textContent.trim()}\n\`\`\`\n\n`;
+            }
+        });
 
-            // Remove any remaining unwanted elements that Readability might have missed
-            const unwantedSelectors = [
-                'script', 'style', 'iframe',
-                '[class*="advertisement"]',
-                '[class*="social-share"]',
-                '[class*="related-articles"]',
-                '[class*="newsletter"]',
-                '[role="complementary"]'
-            ];
+        // Handle Figures/Captions
+        this.turndown.addRule('figure', {
+            filter: 'figure',
+            replacement: (content, node) => {
+                const img = node.querySelector('img');
+                const caption = node.querySelector('figcaption');
 
-            unwantedSelectors.forEach(selector => {
-                element.querySelectorAll(selector).forEach(el => {
-                    console.log('Removing unwanted element post-parse:', el.outerHTML.substring(0, 100));
-                    el.remove();
+                let markdown = '';
+                if (img) {
+                    const alt = img.getAttribute('alt') || '';
+                    const src = img.getAttribute('src') || '';
+                    markdown += `![${alt}](${src})\n`;
+                }
+                if (caption) {
+                    markdown += `*${caption.textContent.trim()}*\n`;
+                }
+                return markdown + '\n';
+            }
+        });
+
+        // Remove scripts, styles, etc
+        this.turndown.remove(['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'footer', 'nav']);
+    }
+
+    async processPage() {
+        console.log("Starting conversion...");
+        try {
+            const content = this.extractMainContent();
+            const metadata = this.extractMetadata();
+            const markdown = this.convertToMarkdown(content);
+
+            await this.sendToBackground(markdown, metadata);
+            console.log("Conversion sent to background.");
+
+        } catch (error) {
+            console.error('Processing failed:', error);
+            alert("Failed to convert page: " + error.message);
+        }
+    }
+
+    extractMainContent() {
+        // 1. Try Readability
+        if (typeof Readability !== 'undefined') {
+            try {
+                const documentClone = document.implementation.createHTMLDocument();
+                const clonedNode = document.documentElement.cloneNode(true);
+                documentClone.documentElement.replaceWith(clonedNode);
+
+                const reader = new Readability(documentClone, {
+                    charThreshold: 100,
+                    keepClasses: true // Keep classes for code blocks
                 });
-            });
+                const article = reader.parse();
 
-            // Clean up whitespace
-            element.innerHTML = element.innerHTML
-            .replace(/\s+/g, ' ')
-            .replace(/>\s+</g, '><')
+                if (article && article.content) {
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = article.content;
+                    return tempDiv;
+                }
+            } catch (error) {
+                console.warn('Readability failed, falling back to manual extraction:', error);
+            }
+        }
+
+        // 2. Fallback: Copy Body
+        console.log("Using body fallback");
+        return document.body.cloneNode(true);
+    }
+
+    convertToMarkdown(contentElement) {
+        if (!this.turndown) throw new Error('Turndown not initialized');
+
+        let markdown = this.turndown.turndown(contentElement.innerHTML);
+        return this.cleanupMarkdown(markdown);
+    }
+
+    cleanupMarkdown(markdown) {
+        return markdown
+            .replace(/\n{4,}/g, '\n\n') // Max 2 empty lines
+            .replace(/[ \t]+$/gm, '')   // Trim trailing spaces
             .trim();
+    }
 
-            return element;
+    extractMetadata() {
+        const doc = document;
+        const metadata = {
+            title: this.getMeta(['og:title', 'twitter:title']) || doc.title || 'Untitled',
+            url: window.location.href,
+            domain: window.location.hostname.replace('www.', ''),
+            description: this.getMeta(['og:description', 'twitter:description', 'description']),
+            author: this.getMeta(['author', 'article:author', 'twitter:creator']),
+            publishedDate: this.getMeta(['article:published_time']),
+            tags: this.extractTags(),
+            wordCount: 0,
+            readingTime: 0
         };
 
-        // Clean the parsed content
-        const cleanedContent = postCleanup(tempDiv);
+        // Calculate Reading stats
+        const text = doc.body.textContent || '';
+        metadata.wordCount = text.trim().split(/\s+/).length;
+        metadata.readingTime = Math.ceil(metadata.wordCount / 200);
 
-        // Use the preserved metadata for final output
-        const finalMetadata = {
-            title: preservedMetadata.ogTitle || preservedMetadata.twitterTitle || preservedMetadata.title || 'Untitled',
-            byline: preservedMetadata.byline || preservedMetadata.metaAuthor || preservedMetadata.dcCreator || '',
-            siteName: preservedMetadata.ogSiteName || preservedMetadata.siteName || window.location.hostname.replace('www.', ''),
-            description: preservedMetadata.ogDescription || preservedMetadata.excerpt || preservedMetadata.metaDescription || '',
-            publishDate: preservedMetadata.publishDate || preservedMetadata.dcDate || new Date().toISOString()
-        };
+        return metadata;
+    }
 
-        // Sanitize the metadata
-        const sanitizedMetadata = {
-            title: finalMetadata.title?.replace(/\s+/g, ' ').trim(),
-            byline: finalMetadata.byline?.replace(/\s+/g, ' ').trim(),
-            siteName: finalMetadata.siteName?.trim(),
-            description: finalMetadata.description?.replace(/\s+/g, ' ').trim(),
-            publishDate: finalMetadata.publishDate
-        };
-
-        // Create filename
-        const fileName = `${sanitizedMetadata.title} - ${sanitizedMetadata.siteName}.txt`
-        .replace(/[/\\?%*:|"<>]/g, '-')
-        .replace(/\s+/g, ' ');
-
-        console.log('Filename will be:', fileName);
-
-        // Construct the markdown content
-        let markdownContent = `# ${sanitizedMetadata.title}\n\n`;
-
-        if (sanitizedMetadata.byline) {
-            markdownContent += `Author: ${sanitizedMetadata.byline}\n`;
+    getMeta(names) {
+        for (const name of names) {
+            const el = document.querySelector(`meta[name="${name}"], meta[property="${name}"]`);
+            if (el && el.content) return el.content.trim();
         }
-        if (sanitizedMetadata.publishDate) {
-            markdownContent += `Date: ${sanitizedMetadata.publishDate}\n`;
+        return null;
+    }
+
+    extractTags() {
+        const tags = new Set();
+        const keywords = document.querySelector('meta[name="keywords"]');
+        if (keywords && keywords.content) {
+            keywords.content.split(',').forEach(t => tags.add(t.trim()));
         }
-        markdownContent += `Source: ${sanitizedMetadata.siteName}\n`;
-        markdownContent += `URL: ${preservedMetadata.canonicalUrl || document.URL}\n`;
-        markdownContent += `Date saved: ${new Date().toISOString()}\n\n`;
+        // Try finding WP style tags
+        document.querySelectorAll('.tags a, a[rel="tag"]').forEach(el => {
+            tags.add(el.textContent.trim());
+        });
+        return Array.from(tags).slice(0, 10);
+    }
 
-        if (sanitizedMetadata.description) {
-            markdownContent += `> ${sanitizedMetadata.description}\n\n`;
-        }
-        markdownContent += `---\n\n`;
-
-        console.log('Converting to Markdown...');
-        markdownContent += turndownService.turndown(cleanedContent.innerHTML);
-        console.log('Conversion complete');
-
-        return {
-            content: markdownContent,
-            fileName: fileName
-        };
-
-    } catch (error) {
-        console.error('Error converting page to Markdown:', error);
-        throw error;
+    sendToBackground(markdown, metadata) {
+        return browser.runtime.sendMessage({
+            type: 'DOWNLOAD_MARKDOWN',
+            data: { markdown, metadata }
+        });
     }
 }
+
+// Initialize
+window.markdownConverter = new AdvancedMarkdownConverter();
