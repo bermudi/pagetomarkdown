@@ -41,10 +41,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "pagetomd@dabg.uk",
-      "data_collection_permissions": {
-        "required": []
-      }
+      "id": "pagetomd@dabg.uk"
     }
   }
 }
