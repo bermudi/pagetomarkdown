@@ -110,9 +110,10 @@ class AdvancedMarkdownConverter {
                 const article = reader.parse();
 
                 if (article && article.content) {
-                    const tempDiv = document.createElement('div');
-                    tempDiv.innerHTML = article.content;
-                    return tempDiv;
+                    const parser = new DOMParser();
+                    const parsedDoc = parser.parseFromString(article.content, 'text/html');
+                    // Prefer body for content; fall back to documentElement if needed
+                    return parsedDoc.body || parsedDoc.documentElement;
                 }
             } catch (error) {
                 console.warn('Readability failed, falling back to manual extraction:', error);
