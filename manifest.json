@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Page to Markdown",
-  "version": "2.3",
+  "version": "3.0",
   "description": "Saves the current page as markdown",
   "permissions": [
     "activeTab",
@@ -17,7 +17,7 @@
   "content_security_policy": "script-src 'self'; object-src 'self'",
   "background": {
     "scripts": [
-      "background.js"
+      "dist/background.js"
     ],
     "persistent": false
   },
@@ -27,10 +27,7 @@
         "<all_urls>"
       ],
       "js": [
-        "lib/readability.js",
-        "lib/turndown.js",
-        "lib/turndown-plugin-gfm.js",
-        "content.js"
+        "dist/content.js"
       ]
     }
   ],
