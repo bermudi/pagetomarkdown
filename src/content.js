@@ -6,7 +6,7 @@ import { gfm } from 'turndown-plugin-gfm';
 class AdvancedMarkdownConverter {
     constructor() {
         this.turndown = null;
-        this.debug = true;
+        this.debug = false;
         this.defuddleResult = null;
         this.defuddleHtml = null;
         this.codeBlocks = [];
