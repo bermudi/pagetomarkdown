@@ -369,6 +369,7 @@ class AdvancedMarkdownConverter {
         const def = this.defuddleResult;
 
         const titleFromMeta = this.getMeta(['og:title', 'twitter:title']);
+        const sourceFromMeta = this.getMeta(['og:site_name', 'twitter:site', 'application-name']);
         const descriptionFromMeta = this.getMeta(['og:description', 'twitter:description', 'description']);
         const authorFromMeta = this.getMeta(['author', 'article:author', 'twitter:creator']);
 
@@ -376,6 +377,7 @@ class AdvancedMarkdownConverter {
             title: def?.title || titleFromMeta || doc.title || 'Untitled',
             url: window.location.href,
             domain: def?.domain || window.location.hostname.replace('www.', ''),
+            source: sourceFromMeta || def?.siteName || def?.site || def?.publication || def?.domain || window.location.hostname.replace('www.', ''),
             description: def?.description || descriptionFromMeta,
             author: def?.author || authorFromMeta,
             publishedDate: def?.published || this.getMeta(['article:published_time']),

@@ -38,7 +38,11 @@ class MarkdownDownloader {
     async downloadMarkdown({ markdown, metadata }) {
         const filename = this.generateFilename(metadata);
         const frontmatter = this.generateFrontmatter(metadata);
-        const content = frontmatter + markdown;
+        const title = metadata?.title ? String(metadata.title).trim() : '';
+        const markdownStart = (markdown ?? '').replace(/^\s+/, '');
+        const startsWithHeading = /^#{1,6}\s+\S/.test(markdownStart);
+        const titleBlock = title && !startsWithHeading ? `# ${title}\n\n` : '';
+        const content = frontmatter + titleBlock + (markdown ?? '');
 
         try {
             const blob = new Blob([content], {
@@ -75,20 +79,21 @@ class MarkdownDownloader {
     generateFrontmatter(metadata) {
         const frontmatter = {
             title: metadata?.title,
+            author: metadata?.author,
+            source: metadata?.source,
             url: metadata?.url,
-            domain: metadata?.domain,
             date_saved: new Date().toISOString(),
             word_count: metadata?.wordCount,
             reading_time: `${metadata?.readingTime} min`
         };
 
-        if (metadata?.author) frontmatter.author = metadata.author;
         if (metadata?.publishedDate) frontmatter.date_published = metadata.publishedDate;
         if (metadata?.description) frontmatter.description = metadata.description;
         if (metadata?.tags && metadata.tags.length > 0) frontmatter.tags = metadata.tags;
 
         const yamlContent = Object.entries(frontmatter)
             .map(([key, value]) => {
+                if (value === undefined || value === null || value === '') return null;
                 if (Array.isArray(value)) {
                     return `${key}:\n${value.map((v) => `  - "${v}"`).join('\n')}`;
                 }
@@ -96,6 +101,7 @@ class MarkdownDownloader {
                 const safeValue = String(value).replace(/"/g, '\\"');
                 return `${key}: "${safeValue}"`;
             })
+            .filter(Boolean)
             .join('\n');
 
         return `---\n${yamlContent}\n---\n\n`;
