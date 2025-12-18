@@ -11,6 +11,8 @@ class AdvancedMarkdownConverter {
         this.defuddleHtml = null;
         this.codeBlocks = [];
 
+        console.log('[PageToMD] content script loaded: mermaid-preprocess-v2');
+
         this.initializeConverter();
         this.setupListeners();
     }
@@ -73,7 +75,30 @@ class AdvancedMarkdownConverter {
             }
         });
 
+        this.turndown.addRule('mermaidSvg', {
+            filter: (node) => {
+                const nodeName = (node.nodeName || '').toLowerCase();
+                if (nodeName !== 'svg') return false;
+                const id = node.getAttribute('id') || '';
+                const className = node.getAttribute('class') || '';
+                const roleDesc = node.getAttribute('aria-roledescription') || '';
+                return (
+                    id.startsWith('mermaid-') ||
+                    /\bmermaid\b/i.test(className) ||
+                    /\bflowchart\b/i.test(className) ||
+                    /flowchart/i.test(roleDesc)
+                );
+            },
+            replacement: (_content, node) => {
+                const source = self.extractMermaidSource(node);
+                const fence = self.computeFence(source || '');
+                const body = source ? source : '';
+                return `\n\n${fence}mermaid\n${body}\n${fence}\n\n`;
+            }
+        });
+
         this.prioritizeRule('preformattedCode');
+        this.prioritizeRule('mermaidSvg');
 
         this.turndown.addRule('inlineCode', {
             filter: (node) => node.nodeName === 'CODE' && (!node.parentNode || node.parentNode.nodeName !== 'PRE'),
@@ -209,13 +234,42 @@ class AdvancedMarkdownConverter {
             firstPreSnippet: firstPre ? (firstPre.textContent || '').trim().slice(0, 140) : null
         });
 
-        const sourceHtml = this.defuddleHtml || contentElement.innerHTML || '';
+        const pageHasMermaidSvg = !!document.querySelector(
+            'svg[id^="mermaid-"], svg.mermaid, svg.flowchart, svg[aria-roledescription*="flowchart"]'
+        );
+
+        const defuddleCandidateHtml = this.defuddleHtml || '';
+        const defuddleSeemsToStripSvg =
+            !!this.defuddleHtml &&
+            pageHasMermaidSvg &&
+            !defuddleCandidateHtml.includes('<svg') &&
+            !defuddleCandidateHtml.includes('mermaid-');
+
+        const sourceHtml = defuddleSeemsToStripSvg ? (document.body?.innerHTML || '') : (this.defuddleHtml || contentElement.innerHTML || '');
+
+        if (defuddleSeemsToStripSvg) {
+            console.log('[PageToMD] defuddle svg fallback', {
+                pageHasMermaidSvg,
+                defuddleHtmlLength: defuddleCandidateHtml.length,
+                fallbackHtmlLength: sourceHtml.length
+            });
+        }
         this.log('convertToMarkdown: sourceHtml length', {
             length: sourceHtml.length,
             usingDefuddleHtml: !!this.defuddleHtml,
             hasPreTag: sourceHtml.includes('<pre')
         });
         const normalizedHtml = this.normalizeContentHtml(sourceHtml);
+
+        console.log('[PageToMD] html signals', {
+            usingDefuddleHtml: !!this.defuddleHtml,
+            pageHasMermaidSvg,
+            defuddleSeemsToStripSvg,
+            sourceHtmlHasSvg: sourceHtml.includes('<svg'),
+            sourceHtmlHasMermaid: sourceHtml.includes('mermaid-'),
+            normalizedHtmlHasSvg: normalizedHtml.includes('<svg'),
+            normalizedHtmlHasMermaid: normalizedHtml.includes('mermaid-')
+        });
 
         const markdown = this.turndown.turndown(normalizedHtml);
         const cleaned = this.cleanupMarkdown(markdown);
@@ -231,13 +285,109 @@ class AdvancedMarkdownConverter {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const body = doc.body || doc.documentElement;
 
+        const rawMermaidSources = this.extractMermaidBlocksFromRawHtml(html);
+        let rawMermaidUsedCount = 0;
+        let rawMermaidIndex = 0;
+
+        const svgs = Array.from(body.querySelectorAll('svg'));
+        let mermaidSvgCount = 0;
+        let mermaidReplacedCount = 0;
+        let mermaidPlaceholderCount = 0;
+        let mermaidEmbeddedSvgCount = 0;
+        for (const svg of svgs) {
+            const id = svg.getAttribute('id') || '';
+            const className = svg.getAttribute('class') || '';
+            const roleDesc = svg.getAttribute('aria-roledescription') || '';
+            const isMermaid =
+                id.startsWith('mermaid-') ||
+                /\bmermaid\b/i.test(className) ||
+                /\bflowchart\b/i.test(className) ||
+                /flowchart/i.test(roleDesc);
+
+            if (!isMermaid) continue;
+
+            mermaidSvgCount += 1;
+
+            let source = this.extractMermaidSource(svg);
+
+            if (!source && rawMermaidIndex < rawMermaidSources.length) {
+                const pick = this.pickRawMermaidSourceForSvg(svg, rawMermaidSources, rawMermaidIndex);
+                source = pick.source;
+                rawMermaidIndex = pick.nextIndex;
+                if (pick.used) {
+                    rawMermaidUsedCount += 1;
+                }
+            }
+            if (!source) {
+                const dataUri = this.svgToDataUri(svg);
+                if (dataUri) {
+                    const img = doc.createElement('img');
+                    img.setAttribute('alt', 'Mermaid diagram');
+                    img.setAttribute('src', dataUri);
+                    svg.replaceWith(img);
+                    mermaidEmbeddedSvgCount += 1;
+                } else {
+                    const placeholder = doc.createElement('p');
+                    placeholder.textContent = '[Mermaid diagram omitted: source not found in page HTML]';
+                    svg.replaceWith(placeholder);
+                    mermaidPlaceholderCount += 1;
+                }
+                continue;
+            }
+
+            const pre = doc.createElement('pre');
+            pre.setAttribute('data-pagetomd-generated', 'mermaid');
+            const code = doc.createElement('code');
+            code.setAttribute('data-lang', 'mermaid');
+            code.setAttribute('class', 'language-mermaid');
+            code.textContent = source;
+            pre.appendChild(code);
+            svg.replaceWith(pre);
+            mermaidReplacedCount += 1;
+        }
+
+        if (mermaidSvgCount > 0) {
+            console.log('[PageToMD] mermaid svg preprocess', {
+                mermaidSvgCount,
+                mermaidReplacedCount,
+                mermaidPlaceholderCount,
+                mermaidEmbeddedSvgCount,
+                rawMermaidSourceCount: rawMermaidSources.length,
+                rawMermaidUsedCount
+            });
+            this.log('normalizeContentHtml: mermaid SVG preprocessing', {
+                mermaidSvgCount,
+                mermaidReplacedCount,
+                mermaidPlaceholderCount,
+                mermaidEmbeddedSvgCount,
+                rawMermaidSourceCount: rawMermaidSources.length,
+                rawMermaidUsedCount
+            });
+        }
+
+        console.log('[PageToMD] svg scan', {
+            svgCount: svgs.length,
+            mermaidSvgCount,
+            mermaidReplacedCount,
+            mermaidPlaceholderCount,
+            mermaidEmbeddedSvgCount,
+            rawMermaidSourceCount: rawMermaidSources.length,
+            rawMermaidUsedCount
+        });
+
         const pres = Array.from(body.querySelectorAll('pre'));
         this.log('normalizeContentHtml: found PRE elements in source HTML', { count: pres.length });
 
         for (const pre of pres) {
             const language = this.detectLanguageForPre(pre);
 
-            let codeText = pre.textContent || '';
+            const existingCodeElement = pre.querySelector('code');
+            let codeText = (existingCodeElement?.textContent ?? pre.textContent ?? '');
+            const candidateInnerText = (existingCodeElement?.innerText ?? pre.innerText ?? '');
+            if (candidateInnerText && !codeText.includes('\n') && candidateInnerText.includes('\n')) {
+                codeText = candidateInnerText;
+            }
+
             codeText = codeText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             codeText = codeText.replace(/\u00A0/g, ' ');
             codeText = codeText.replace(/\n+$/g, '');
@@ -259,6 +409,134 @@ class AdvancedMarkdownConverter {
         });
 
         return result;
+    }
+
+    pickRawMermaidSourceForSvg(svgElement, rawMermaidSources, startIndex) {
+        const className = (svgElement?.getAttribute?.('class') || '').toLowerCase();
+        const roleDesc = (svgElement?.getAttribute?.('aria-roledescription') || '').toLowerCase();
+
+        let expected = 'graph';
+        if (className.includes('statediagram') || roleDesc.includes('state')) expected = 'state';
+        if (className.includes('sequencediagram') || roleDesc.includes('sequence')) expected = 'sequence';
+        if (className.includes('flowchart') || roleDesc.includes('flowchart')) expected = 'graph';
+
+        const matchesType = (src) => {
+            const first = (src || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+            const lower = first.toLowerCase();
+            if (expected === 'state') return lower.startsWith('statediagram');
+            if (expected === 'sequence') return lower.startsWith('sequencediagram');
+            return lower.startsWith('graph') || lower.startsWith('flowchart');
+        };
+
+        for (let i = startIndex; i < rawMermaidSources.length; i += 1) {
+            const candidate = rawMermaidSources[i] || '';
+            if (!candidate) continue;
+            if (!matchesType(candidate)) continue;
+            return { source: candidate, nextIndex: i + 1, used: true };
+        }
+
+        const fallback = rawMermaidSources[startIndex] || '';
+        if (!fallback) return { source: '', nextIndex: startIndex, used: false };
+        return { source: fallback, nextIndex: startIndex + 1, used: true };
+    }
+
+    extractMermaidSource(svgElement) {
+        if (!svgElement) return '';
+
+        const attrCandidates = ['data-source', 'data-mermaid', 'data-diagram', 'data-graph', 'data-code'];
+        for (const attr of attrCandidates) {
+            const value = svgElement.getAttribute(attr);
+            if (value && /\S/.test(value)) return value.trim();
+        }
+
+        for (const attr of attrCandidates) {
+            const el = svgElement.closest?.(`[${attr}]`);
+            if (!el) continue;
+            const value = el.getAttribute(attr);
+            if (value && /\S/.test(value)) return value.trim();
+        }
+
+        const container = svgElement.closest('figure, div, section, article') || svgElement.parentElement;
+
+        const selectors = [
+            'pre code.language-mermaid',
+            'code.language-mermaid',
+            'pre.mermaid',
+            'code.mermaid',
+            'pre code[data-lang="mermaid"]',
+            'code[data-lang="mermaid"]',
+            'div.mermaid',
+            'script[type="application/mermaid"]',
+            'script[type="text/plain"][data-lang="mermaid"]'
+        ];
+
+        if (container) {
+            for (const sel of selectors) {
+                const el = container.querySelector(sel);
+                if (!el) continue;
+                if (el === svgElement) continue;
+                if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
+                const text = (el.innerText ?? el.textContent ?? '').trim();
+                if (text) return text;
+            }
+        }
+
+        const doc = svgElement.ownerDocument;
+        if (doc) {
+            for (const sel of selectors) {
+                const el = doc.querySelector(sel);
+                if (!el) continue;
+                if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
+                const text = (el.innerText ?? el.textContent ?? '').trim();
+                if (text) return text;
+            }
+        }
+
+        return '';
+    }
+
+    extractMermaidBlocksFromRawHtml(html) {
+        if (!html) return [];
+
+        const results = [];
+        const re = /```mermaid(?:\r?\n|\\n)([\s\S]*?)```/g;
+        let match;
+        while ((match = re.exec(html))) {
+            const raw = match[1] || '';
+            const decoded = this.unescapeEmbeddedText(raw).trim();
+            if (decoded) results.push(decoded);
+        }
+        return results;
+    }
+
+    unescapeEmbeddedText(text) {
+        if (!text) return '';
+        let result = String(text);
+        result = result.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+        result = result.replace(/\\n/g, '\n');
+        result = result.replace(/\\r/g, '\r');
+        result = result.replace(/\\t/g, '\t');
+        result = result.replace(/\\"/g, '"');
+        result = result.replace(/\\\\/g, '\\');
+        return result;
+    }
+
+    svgToDataUri(svgElement) {
+        try {
+            const serializer = new XMLSerializer();
+            let svgText = serializer.serializeToString(svgElement);
+            if (!/\sxmlns=/.test(svgText)) {
+                svgText = svgText.replace(
+                    '<svg',
+                    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
+                );
+            }
+            svgText = svgText.replace(/>\s+</g, '><').trim();
+            const encoded = encodeURIComponent(svgText).replace(/'/g, '%27').replace(/"/g, '%22');
+            return `data:image/svg+xml;charset=utf-8,${encoded}`;
+        } catch {
+            return '';
+        }
     }
 
     detectLanguageForPre(pre) {
