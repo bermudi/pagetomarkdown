@@ -6,7 +6,12 @@ class MarkdownDownloader {
     }
 
     setupEventListeners() {
-        const onClicked = browser.action?.onClicked ?? browser.browserAction?.onClicked;
+        const nativeBrowser = globalThis.browser;
+        const onClicked =
+            nativeBrowser?.browserAction?.onClicked ??
+            nativeBrowser?.action?.onClicked ??
+            browser.action?.onClicked ??
+            browser.browserAction?.onClicked;
         if (onClicked) {
             onClicked.addListener(this.handleIconClick.bind(this));
         }
@@ -14,10 +19,17 @@ class MarkdownDownloader {
         browser.runtime.onMessage.addListener(this.handleMessage.bind(this));
     }
 
-    async handleIconClick(tab) {
+    async handleIconClick(tab, onClickData) {
+        const modifiers = onClickData?.modifiers ?? [];
+        const stripLinks = Array.isArray(modifiers) && modifiers.includes('Shift');
+
         await browser.tabs
             .sendMessage(tab.id, {
-                action: 'trigger_conversion'
+                action: 'trigger_conversion',
+                options: {
+                    stripLinks,
+                    stripImages: stripLinks
+                }
             })
             .catch((err) => {
                 console.error('Could not send message to content script. Try reloading the page.', err);
@@ -35,9 +47,9 @@ class MarkdownDownloader {
             });
     }
 
-    async downloadMarkdown({ markdown, metadata }) {
+    async downloadMarkdown({ markdown, metadata, options }) {
         const filename = this.generateFilename(metadata);
-        const frontmatter = this.generateFrontmatter(metadata);
+        const frontmatter = this.generateFrontmatter(metadata, options);
         const title = metadata?.title ? String(metadata.title).trim() : '';
         const markdownStart = (markdown ?? '').replace(/^\s+/, '');
         const startsWithHeading = /^#{1,6}\s+\S/.test(markdownStart);
@@ -76,20 +88,24 @@ class MarkdownDownloader {
         return `${sanitizedTitle} - ${domain}.md`;
     }
 
-    generateFrontmatter(metadata) {
+    generateFrontmatter(metadata, options) {
+        const llmMode = !!options?.stripLinks;
         const frontmatter = {
             title: metadata?.title,
             author: metadata?.author,
             source: metadata?.source,
             url: metadata?.url,
-            date_saved: new Date().toISOString(),
-            word_count: metadata?.wordCount,
-            reading_time: `${metadata?.readingTime} min`
+            date_saved: new Date().toISOString()
         };
 
         if (metadata?.publishedDate) frontmatter.date_published = metadata.publishedDate;
-        if (metadata?.description) frontmatter.description = metadata.description;
-        if (metadata?.tags && metadata.tags.length > 0) frontmatter.tags = metadata.tags;
+
+        if (!llmMode) {
+            frontmatter.word_count = metadata?.wordCount;
+            frontmatter.reading_time = `${metadata?.readingTime} min`;
+            if (metadata?.description) frontmatter.description = metadata.description;
+            if (metadata?.tags && metadata.tags.length > 0) frontmatter.tags = metadata.tags;
+        }
 
         const yamlContent = Object.entries(frontmatter)
             .map(([key, value]) => {

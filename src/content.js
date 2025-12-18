@@ -10,6 +10,7 @@ class AdvancedMarkdownConverter {
         this.defuddleResult = null;
         this.defuddleHtml = null;
         this.codeBlocks = [];
+        this.options = { stripLinks: false, stripImages: false };
 
         console.log('[PageToMD] content script loaded: mermaid-preprocess-v2');
 
@@ -20,7 +21,7 @@ class AdvancedMarkdownConverter {
     setupListeners() {
         browser.runtime.onMessage.addListener((message) => {
             if (message?.action === 'trigger_conversion') {
-                void this.processPage();
+                void this.processPage(message?.options);
             }
         });
     }
@@ -47,6 +48,21 @@ class AdvancedMarkdownConverter {
 
     addCustomRules() {
         const self = this;
+
+        this.turndown.addRule('stripLinks', {
+            filter: (node) => self.options.stripLinks && node.nodeName === 'A',
+            replacement: (content) => content
+        });
+
+        this.turndown.addRule('stripImages', {
+            filter: (node) => self.options.stripImages && node.nodeName === 'IMG',
+            replacement: (_content, node) => {
+                const alt = (node.getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
+                if (!alt) return '';
+                return `(Image: ${alt})`;
+            }
+        });
+
         this.turndown.addRule('preformattedCode', {
             filter: (node) => {
                 const match = node.nodeName === 'PRE';
@@ -170,7 +186,14 @@ class AdvancedMarkdownConverter {
                 if (img) {
                     const alt = img.getAttribute('alt') || '';
                     const src = img.getAttribute('src') || '';
-                    markdown += `![${alt}](${src})\n`;
+                    if (self.options.stripImages) {
+                        const safeAlt = String(alt).trim().replace(/\s+/g, ' ');
+                        if (safeAlt) {
+                            markdown += `(Image: ${safeAlt})\n`;
+                        }
+                    } else {
+                        markdown += `![${alt}](${src})\n`;
+                    }
                 }
                 if (caption) {
                     markdown += `*${caption.textContent.trim()}*\n`;
@@ -186,10 +209,18 @@ class AdvancedMarkdownConverter {
         });
 
         this.turndown.remove(['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'footer', 'nav']);
+
+        this.prioritizeRule('stripLinks');
+        this.prioritizeRule('stripImages');
     }
 
-    async processPage() {
+    async processPage(options) {
         console.log('Starting conversion...');
+
+        this.options = {
+            stripLinks: !!options?.stripLinks,
+            stripImages: !!options?.stripImages
+        };
 
         try {
             const content = this.extractMainContent();
@@ -696,7 +727,7 @@ class AdvancedMarkdownConverter {
     sendToBackground(markdown, metadata) {
         return browser.runtime.sendMessage({
             type: 'DOWNLOAD_MARKDOWN',
-            data: { markdown, metadata }
+            data: { markdown, metadata, options: this.options }
         });
     }
 
