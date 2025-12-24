@@ -236,6 +236,14 @@ class AdvancedMarkdownConverter {
     }
 
     extractMainContent() {
+        const poeConversation = this.extractPoeConversationTranscript();
+        if (poeConversation) {
+            this.log('Using Poe conversation extractor');
+            this.defuddleResult = null;
+            this.defuddleHtml = null;
+            return poeConversation;
+        }
+
         try {
             this.log('Defuddle: parsing document');
             const defuddle = new Defuddle(document, { url: window.location.href });
@@ -253,6 +261,135 @@ class AdvancedMarkdownConverter {
 
         console.log('Using body fallback');
         return document.body.cloneNode(true);
+    }
+
+    isOnPoeConversationPage() {
+        const host = window.location.hostname || '';
+        if (!/poe\.com$/i.test(host)) return false;
+        return !!document.querySelector('[id^="message-"].ChatMessage_chatMessage__xkgHx');
+    }
+
+    extractPoeConversationTranscript() {
+        try {
+            if (!this.isOnPoeConversationPage()) return null;
+
+            const messageNodes = Array.from(
+                document.querySelectorAll('[id^="message-"].ChatMessage_chatMessage__xkgHx')
+            );
+            if (!messageNodes.length) return null;
+
+            const transcript = document.createElement('article');
+            transcript.setAttribute('data-pagetomd-generated', 'poe-conversation');
+            transcript.classList.add('pagetomd-poe-conversation');
+
+            const title = document.createElement('h1');
+            title.textContent = document.title || 'Poe Conversation';
+            transcript.appendChild(title);
+
+            let addedMessages = 0;
+            for (const node of messageNodes) {
+                const section = this.buildPoeMessageSection(node);
+                if (!section) continue;
+                transcript.appendChild(section);
+                addedMessages += 1;
+            }
+
+            if (addedMessages === 0) return null;
+            return transcript;
+        } catch (error) {
+            console.warn('[PageToMD] Failed to extract Poe conversation', error);
+            return null;
+        }
+    }
+
+    buildPoeMessageSection(messageNode) {
+        const wrapper = messageNode.querySelector('.ChatMessage_messageWrapper__4Ugd6');
+        const isUser =
+            wrapper?.classList?.contains('ChatMessage_rightSideMessageWrapper__r0roB') ?? false;
+        const role = isUser ? 'user' : 'assistant';
+        const speakerName = this.extractPoeSpeakerName(messageNode, role);
+
+        const contentNode =
+            messageNode.querySelector('.Message_messageTextContainer__w64Sc') ??
+            messageNode.querySelector('.Message_selectableText__SQ8WH') ??
+            messageNode.querySelector('.Markdown_markdownContainer__Tz3HQ') ??
+            messageNode.querySelector('.Message_messageBubbleWrapper__sEq8z');
+
+        const attachmentsNode = messageNode.querySelector('.Attachments_attachments__x_H2Q');
+
+        if (!contentNode && !attachmentsNode) {
+            return null;
+        }
+
+        const section = document.createElement('section');
+        section.setAttribute('data-speaker-role', role);
+        if (speakerName) {
+            section.setAttribute('data-speaker', speakerName);
+        }
+
+        const heading = document.createElement('h3');
+        heading.textContent = speakerName || (isUser ? 'You' : 'Assistant');
+        section.appendChild(heading);
+
+        if (contentNode) {
+            const clonedContent = contentNode.cloneNode(true);
+            this.stripPoeUiElements(clonedContent);
+            section.appendChild(clonedContent);
+        }
+
+        if (attachmentsNode) {
+            section.appendChild(attachmentsNode.cloneNode(true));
+        }
+
+        const timestamp = this.extractPoeMessageTimestamp(messageNode);
+        if (timestamp) {
+            const meta = document.createElement('p');
+            meta.textContent = timestamp;
+            meta.setAttribute('data-message-meta', 'timestamp');
+            section.appendChild(meta);
+        }
+
+        return section;
+    }
+
+    extractPoeSpeakerName(messageNode, role) {
+        if (role === 'user') {
+            return 'You';
+        }
+
+        const botHeader = messageNode.querySelector('.BotHeader_title__cURS_');
+        const text = botHeader?.textContent?.trim();
+        if (text) return text;
+
+        const avatarAlt = messageNode.querySelector('.Avatar_root__rwLF0 img')?.getAttribute('alt');
+        if (avatarAlt) return avatarAlt.replace(/^Bot image for\s*/i, '').trim();
+
+        return 'Assistant';
+    }
+
+    extractPoeMessageTimestamp(messageNode) {
+        const metaTexts = Array.from(
+            messageNode.querySelectorAll('.Message_messageMetadataText__FxY5_')
+        )
+            .map((el) => el.textContent?.trim())
+            .filter((text) => text && text !== 'Parameters' && text !== '·');
+
+        if (!metaTexts.length) return '';
+
+        const candidate = metaTexts[metaTexts.length - 1];
+        if (!candidate) return '';
+
+        return candidate;
+    }
+
+    stripPoeUiElements(node) {
+        node.querySelectorAll('.MessageOverflowActions_overflowActionsWrapper__uC5oj').forEach((el) =>
+            el.remove()
+        );
+        node.querySelectorAll('.ChatMessageOverflowButton_overflowButtonWrapper__gzb2s').forEach(
+            (el) => el.remove()
+        );
+        node.querySelectorAll('button').forEach((el) => el.remove());
     }
 
     convertToMarkdown(contentElement) {

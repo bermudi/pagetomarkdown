@@ -1,7 +1,7 @@
 {
   "name": "pagetomd",
   "private": true,
-  "version": "3.0.0",
+  "version": "3.3.0",
   "type": "module",
   "scripts": {
     "build": "pnpm run clean && vite build --config vite.content.config.js && vite build --config vite.background.config.js",

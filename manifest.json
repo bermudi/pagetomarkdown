@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Page to Markdown",
-  "version": "4.0",
+  "version": "3.3",
   "description": "Saves the current page as markdown",
   "permissions": [
     "activeTab",
