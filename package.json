@@ -9,7 +9,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "defuddle": "^0.6.6",
+    "defuddle": "^0.9.0",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2",
     "webextension-polyfill": "^0.12.0"
