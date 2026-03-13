@@ -244,6 +244,9 @@ class AdvancedMarkdownConverter {
             return poeConversation;
         }
 
+        const originalBodyClone = document.body.cloneNode(true);
+        const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
+
         try {
             this.log('Defuddle: parsing document');
             const defuddle = new Defuddle(document, { url: window.location.href });
@@ -253,14 +256,67 @@ class AdvancedMarkdownConverter {
 
             if (result?.content) {
                 const parsedDoc = new DOMParser().parseFromString(result.content, 'text/html');
-                return parsedDoc.body || parsedDoc.documentElement;
+                const parsedBody = parsedDoc.body || parsedDoc.documentElement;
+                const parsedPreCount = parsedBody ? parsedBody.querySelectorAll('pre').length : 0;
+
+                if (this.shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount)) {
+                    console.warn('[PageToMD] Defuddle removed code blocks – falling back to original DOM');
+                    this.log('Hybrid fallback triggered', { originalPreCount, parsedPreCount });
+                    this.defuddleHtml = originalBodyClone.innerHTML || '';
+                    return originalBodyClone;
+                }
+
+                return parsedBody;
             }
         } catch (error) {
             console.warn('Defuddle failed, falling back to manual extraction:', error);
         }
 
         console.log('Using body fallback');
-        return document.body.cloneNode(true);
+        this.defuddleHtml = originalBodyClone.innerHTML || '';
+        return originalBodyClone;
+    }
+
+    shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount) {
+        if (originalPreCount === 0) {
+            return false;
+        }
+
+        if (parsedPreCount === 0) {
+            return true;
+        }
+
+        if (parsedPreCount < originalPreCount) {
+            const originalHasCode = this.hasMeaningfulCodeBlocks(document.body);
+            const parsedHasCode = this.hasMeaningfulCodeBlocks(
+                this.createDocumentFromHtml(this.defuddleHtml)?.body || null
+            );
+
+            if (originalHasCode && !parsedHasCode) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    hasMeaningfulCodeBlocks(root) {
+        if (!root) return false;
+        return Array.from(root.querySelectorAll('pre')).some((pre) => {
+            const codeEl = pre.querySelector('code');
+            const text = (codeEl?.textContent ?? pre.textContent ?? '').trim();
+            return text.length > 10;
+        });
+    }
+
+    createDocumentFromHtml(html) {
+        if (!html) return null;
+        try {
+            return new DOMParser().parseFromString(html, 'text/html');
+        } catch (error) {
+            console.warn('[PageToMD] Failed to parse HTML for comparison', error);
+            return null;
+        }
     }
 
     isOnPoeConversationPage() {
