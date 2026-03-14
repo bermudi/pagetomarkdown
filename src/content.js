@@ -272,7 +272,7 @@ class AdvancedMarkdownConverter {
                 const parsedBody = parsedDoc.body || parsedDoc.documentElement;
                 const parsedPreCount = parsedBody ? parsedBody.querySelectorAll('pre').length : 0;
 
-                if (this.shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount)) {
+                if (this.shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount, originalBodyClone)) {
                     console.warn('[PageToMD] Defuddle removed code blocks – falling back to original DOM');
                     this.log('Hybrid fallback triggered', { originalPreCount, parsedPreCount });
                     this.defuddleHtml = originalBodyClone.innerHTML || '';
@@ -290,7 +290,7 @@ class AdvancedMarkdownConverter {
         return originalBodyClone;
     }
 
-    shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount) {
+    shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount, originalBodyClone) {
         if (originalPreCount === 0) {
             return false;
         }
@@ -300,7 +300,7 @@ class AdvancedMarkdownConverter {
         }
 
         if (parsedPreCount < originalPreCount) {
-            const originalHasCode = this.hasMeaningfulCodeBlocks(document.body);
+            const originalHasCode = this.hasMeaningfulCodeBlocks(originalBodyClone);
             const parsedHasCode = this.hasMeaningfulCodeBlocks(
                 this.createDocumentFromHtml(this.defuddleHtml)?.body || null
             );
