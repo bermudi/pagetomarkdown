@@ -130,7 +130,12 @@ function buildRedditCommentsList(doc, sitetable, depth) {
 
         const commentMeta = doc.createElement('p');
         commentMeta.setAttribute('data-reddit-meta', 'comment');
-        const metaParts = [`u/${author}`];
+        const metaParts = [];
+        if (author && author !== '[deleted]') {
+            metaParts.push(`u/${author}`);
+        } else {
+            metaParts.push('[deleted]');
+        }
         if (score) metaParts.push(score);
         if (timeText) metaParts.push(timeText);
         commentMeta.textContent = metaParts.join(' • ');
