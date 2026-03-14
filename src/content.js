@@ -2,6 +2,7 @@ import browser from 'webextension-polyfill';
 import Defuddle from 'defuddle';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
+import { extractRedditThread } from './lib/redditExtractor';
 
 class AdvancedMarkdownConverter {
     constructor() {
@@ -11,6 +12,7 @@ class AdvancedMarkdownConverter {
         this.defuddleHtml = null;
         this.codeBlocks = [];
         this.options = { stripLinks: false, stripImages: false };
+        this.metadataOverrides = null;
 
         console.log('[PageToMD] content script loaded: mermaid-preprocess-v2');
 
@@ -217,6 +219,7 @@ class AdvancedMarkdownConverter {
     async processPage(options) {
         console.log('Starting conversion...');
 
+        this.metadataOverrides = null;
         this.options = {
             stripLinks: !!options?.stripLinks,
             stripImages: !!options?.stripImages
@@ -235,6 +238,7 @@ class AdvancedMarkdownConverter {
         }
     }
 
+
     extractMainContent() {
         const poeConversation = this.extractPoeConversationTranscript();
         if (poeConversation) {
@@ -242,6 +246,15 @@ class AdvancedMarkdownConverter {
             this.defuddleResult = null;
             this.defuddleHtml = null;
             return poeConversation;
+        }
+
+        const redditThread = extractRedditThread(document);
+        if (redditThread?.article) {
+            this.log('Using Reddit thread extractor');
+            this.metadataOverrides = redditThread.metadataOverrides ?? null;
+            this.defuddleResult = null;
+            this.defuddleHtml = redditThread.article.outerHTML || '';
+            return redditThread.article;
         }
 
         const originalBodyClone = document.body.cloneNode(true);
@@ -891,6 +904,17 @@ class AdvancedMarkdownConverter {
         const text = doc.body.textContent || '';
         metadata.wordCount = def?.wordCount ?? text.trim().split(/\s+/).length;
         metadata.readingTime = Math.ceil(metadata.wordCount / 200);
+
+        if (this.metadataOverrides) {
+            for (const [key, value] of Object.entries(this.metadataOverrides)) {
+                if (value == null) continue;
+                if (key === 'tags' && Array.isArray(value)) {
+                    metadata.tags = value.slice(0, 10);
+                    continue;
+                }
+                metadata[key] = value;
+            }
+        }
 
         return metadata;
     }

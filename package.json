@@ -6,7 +6,8 @@
   "scripts": {
     "build": "pnpm run clean && vite build --config vite.content.config.js && vite build --config vite.background.config.js",
     "dev": "pnpm run clean && concurrently -k \"vite build --watch --config vite.content.config.js\" \"vite build --watch --config vite.background.config.js\"",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "dependencies": {
     "defuddle": "^0.12.0",
@@ -16,7 +17,9 @@
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
+    "happy-dom": "^20.8.4",
     "rollup": "4.59.0",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.1.0"
   }
 }
