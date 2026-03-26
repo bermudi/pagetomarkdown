@@ -3,6 +3,7 @@ import Defuddle from 'defuddle';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { extractRedditThread } from './lib/redditExtractor';
+import { preserveActiveTabs } from './lib/tabState';
 
 class AdvancedMarkdownConverter {
     constructor() {
@@ -258,14 +259,17 @@ class AdvancedMarkdownConverter {
         }
 
         const originalBodyClone = document.body.cloneNode(true);
+        const tabStateResult = this.preserveInteractiveState(originalBodyClone);
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
 
         try {
             this.log('Defuddle: parsing document');
-            const defuddle = new Defuddle(document, { url: window.location.href });
+            const defuddleInput = this.createDocumentForDefuddle(originalBodyClone);
+            const defuddle = new Defuddle(defuddleInput, { url: window.location.href });
             const result = defuddle.parse();
             this.defuddleResult = result;
             this.defuddleHtml = result?.content ?? null;
+            this.log('Interactive-state preprocessing complete', tabStateResult);
 
             if (result?.content) {
                 const parsedDoc = new DOMParser().parseFromString(result.content, 'text/html');
@@ -311,6 +315,38 @@ class AdvancedMarkdownConverter {
         }
 
         return false;
+    }
+
+    preserveInteractiveState(root) {
+        if (!root) {
+            return { tablistsProcessed: 0, panelsRemoved: 0 };
+        }
+
+        try {
+            return preserveActiveTabs(root);
+        } catch (error) {
+            console.warn('[PageToMD] Failed to preserve interactive state', error);
+            return { tablistsProcessed: 0, panelsRemoved: 0 };
+        }
+    }
+
+    createDocumentForDefuddle(bodyClone) {
+        const doc = document.implementation.createHTMLDocument(document.title || 'Page to Markdown');
+
+        const sourceHead = document.head;
+        if (sourceHead) {
+            for (const node of Array.from(sourceHead.childNodes)) {
+                doc.head.appendChild(node.cloneNode(true));
+            }
+        }
+
+        if (bodyClone) {
+            for (const node of Array.from(bodyClone.childNodes)) {
+                doc.body.appendChild(node.cloneNode(true));
+            }
+        }
+
+        return doc;
     }
 
     hasMeaningfulCodeBlocks(root) {
