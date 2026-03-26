@@ -665,7 +665,9 @@ class AdvancedMarkdownConverter {
             codeText = codeText.replace(/\u00A0/g, ' ');
             codeText = codeText.replace(/\n+$/g, '');
 
-            pre.innerHTML = '';
+            while (pre.firstChild) {
+                pre.removeChild(pre.firstChild);
+            }
             const code = doc.createElement('code');
             if (language) {
                 code.setAttribute('data-lang', language);
