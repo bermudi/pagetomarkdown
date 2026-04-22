@@ -4,6 +4,7 @@ import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { extractRedditThread } from './lib/redditExtractor';
 import { preserveActiveTabs } from './lib/tabState';
+import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
 
 class AdvancedMarkdownConverter {
     constructor() {
@@ -227,6 +228,17 @@ class AdvancedMarkdownConverter {
         };
 
         try {
+            const yt = await tryExtractYouTubeTranscript();
+            if (yt.found) {
+                await this.sendToBackground(yt.markdown, yt.metadata);
+                console.log('YouTube transcript sent to background.');
+                return;
+            }
+            if (yt.isYouTube) {
+                alert('No transcript available for this YouTube video.');
+                return;
+            }
+
             const content = this.extractMainContent();
             const metadata = this.extractMetadata();
             const markdown = this.convertToMarkdown(content);
