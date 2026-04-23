@@ -1,11 +1,11 @@
 {
   "name": "pagetomd",
   "private": true,
-  "version": "4.0.0",
+  "version": "4.1.0",
   "type": "module",
   "scripts": {
-    "build": "pnpm run clean && vite build --config vite.content.config.js && vite build --config vite.background.config.js",
-    "dev": "pnpm run clean && concurrently -k \"vite build --watch --config vite.content.config.js\" \"vite build --watch --config vite.background.config.js\"",
+    "build": "pnpm run clean && vite build --config vite.content.config.js && vite build --config vite.background.config.js && vite build --config vite.options.config.js",
+    "dev": "pnpm run clean && concurrently -k \"vite build --watch --config vite.content.config.js\" \"vite build --watch --config vite.background.config.js\" \"vite build --watch --config vite.options.config.js\"",
     "clean": "rm -rf dist",
     "test": "vitest run"
   },

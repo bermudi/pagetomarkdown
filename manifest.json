@@ -1,12 +1,17 @@
 {
   "manifest_version": 2,
   "name": "Page to Markdown",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Saves the current page as markdown",
   "permissions": [
     "activeTab",
-    "downloads"
+    "downloads",
+    "storage"
   ],
+  "options_ui": {
+    "page": "dist/options.html",
+    "open_in_tab": false
+  },
   "browser_action": {
     "default_icon": {
       "48": "icons/icon48.png",

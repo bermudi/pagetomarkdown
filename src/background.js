@@ -19,9 +19,20 @@ class MarkdownDownloader {
         browser.runtime.onMessage.addListener(this.handleMessage.bind(this));
     }
 
+    async getDefaultStripLinks() {
+        try {
+            const result = await browser.storage.local.get('defaultStripLinks');
+            return result.defaultStripLinks ?? false;
+        } catch {
+            return false;
+        }
+    }
+
     async handleIconClick(tab, onClickData) {
         const modifiers = onClickData?.modifiers ?? [];
-        const stripLinks = Array.isArray(modifiers) && modifiers.includes('Shift');
+        const shiftHeld = Array.isArray(modifiers) && modifiers.includes('Shift');
+        const defaultStripLinks = await this.getDefaultStripLinks();
+        const stripLinks = shiftHeld ? !defaultStripLinks : defaultStripLinks;
 
         await browser.tabs
             .sendMessage(tab.id, {

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Page to Markdown Options</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Page to Markdown Options</h1>
+
+        <section>
+            <h2>Default Download Mode</h2>
+            <p class="description">
+                Choose how the extension behaves when you click the toolbar icon.
+                Hold <kbd>Shift</kbd> while clicking to temporarily switch to the opposite mode.
+            </p>
+
+            <label class="radio-label">
+                <input type="radio" name="defaultMode" value="withLinks" checked>
+                <span class="radio-text">
+                    <strong>Full markdown</strong> — keep links and images
+                </span>
+            </label>
+
+            <label class="radio-label">
+                <input type="radio" name="defaultMode" value="withoutLinks">
+                <span class="radio-text">
+                    <strong>Plain text</strong> — remove links and images (LLM-friendly)
+                </span>
+            </label>
+        </section>
+
+        <div id="status" class="status" role="status" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="options.js"></script>
+</body>
+</html>
