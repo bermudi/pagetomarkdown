@@ -100,6 +100,38 @@ kbd {
     font-size: 0.9375rem;
 }
 
+.check-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    margin: 0 0 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.check-label:hover {
+    border-color: var(--accent);
+    background: rgba(0, 96, 223, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+    .check-label:hover {
+        background: rgba(0, 221, 255, 0.06);
+    }
+}
+
+.check-label input[type="checkbox"] {
+    margin-top: 0.2rem;
+    accent-color: var(--accent);
+}
+
+.check-text {
+    font-size: 0.9375rem;
+}
+
 .status {
     margin-top: 1rem;
     font-size: 0.9375rem;

@@ -221,6 +221,13 @@ class AdvancedMarkdownConverter {
     async processPage(options) {
         console.log('Starting conversion...');
 
+        try {
+            const debugResult = await browser.storage.local.get('debugLogging');
+            this.debug = !!debugResult.debugLogging;
+        } catch {
+            this.debug = false;
+        }
+
         this.metadataOverrides = null;
         this.options = {
             stripLinks: !!options?.stripLinks,
