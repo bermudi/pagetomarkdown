@@ -1,0 +1,91 @@
+name: Publish to AMO
+
+# Publish to addons.mozilla.org (AMO) when you push a version tag.
+# How to use:
+#   1. Bump version in package.json (e.g. 4.1.2) and commit
+#   2. git tag v4.1.2 && git push origin v4.1.2
+#   3. This workflow builds, lints, and signs the add-on with AMO
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   AMO_JWT_ISSUER  - API key (JWT issuer) from https://addons.mozilla.org/developers/addon/api/key/
+#   AMO_JWT_SECRET  - API secret (JWT secret) from the same page
+# The add-on ID is already in manifest.json: {3ba5f422-9edc-46c9-8e29-b689840a4a8f}
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # to create GitHub Release and upload assets
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Sync manifest version from package.json
+        run: |
+          PKG_VER=$(jq -r .version package.json)
+          echo "package.json version: $PKG_VER"
+          MANI_VER=$(jq -r .version manifest.json)
+          echo "manifest.json version before: $MANI_VER"
+          jq --arg v "$PKG_VER" '.version = $v' manifest.json > /tmp/manifest.json && mv /tmp/manifest.json manifest.json
+          echo "manifest.json version after: $(jq -r .version manifest.json)"
+
+      - name: Build extension
+        run: pnpm run build
+
+      - name: Lint extension
+        run: npx --yes web-ext lint --source-dir .
+
+      - name: Sign and publish to AMO
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+            echo "::error::Missing AMO secrets. Add AMO_JWT_ISSUER and AMO_JWT_SECRET in GitHub Settings → Secrets → Actions"
+            exit 1
+          fi
+          # --channel listed = public listing on AMO
+          # Mirrors build_zip.sh: only manifest + dist + icons go to the store.
+          # This keeps the XPI small and avoids lint noise from src/test files.
+          npx --yes web-ext sign \
+            --source-dir . \
+            --artifacts-dir web-ext-artifacts \
+            --channel listed \
+            --ignore-files "web-ext-artifacts/**" "node_modules/**" ".git/**" ".github/**" "*.zip" "*.xpi" "fix_deepwiki.py" "ROADMAP.md" "pnpm-lock.yaml" "pnpm-workspace.yaml" "vite.*.config.js" "build_zip.sh" "src/**" "package.json" "LICENSE" "README.md" "icons/*.xcf" "dist/**/*.map"
+
+      - name: Upload signed XPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-xpi
+          path: web-ext-artifacts/*.xpi
+          if-no-files-found: error
+
+      - name: Create GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: web-ext-artifacts/*.xpi
+          generate_release_notes: true
