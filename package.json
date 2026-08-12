@@ -16,8 +16,8 @@
     "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "happy-dom": "^20.8.9",
+    "concurrently": "^10.0.4",
+    "happy-dom": "^20.11.2",
     "rollup": "4.59.0",
     "vite": "^7.3.5",
     "vitest": "^4.1.0"
