@@ -26,8 +26,21 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Lint (eslint)
+        run: pnpm run lint
+
       - name: Build extension
         run: pnpm run build
+
+      - name: Check manifest not dirtied by build (package.json is source of truth)
+        run: |
+          if ! git diff --quiet manifest.json; then
+            echo "::error::manifest.json was mutated by build. package.json is the source of truth; build must not sed -i the tracked file."
+            git diff manifest.json
+            exit 1
+          fi
+          PKG_VER=$(jq -r .version package.json)
+          echo "package.json version: $PKG_VER (manifest.json may lag; publish workflow syncs at tag time)"
 
       - name: Lint extension (web-ext)
         run: npx --yes web-ext lint --source-dir .

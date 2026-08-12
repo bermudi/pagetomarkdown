@@ -31,6 +31,7 @@ export function extractRedditThread(doc = document) {
         header.appendChild(title);
 
         const postThing = doc.querySelector('#siteTable .thing.link') || doc.querySelector('.linklisting .thing.link');
+        if (!postThing) return null;
         const postEntry = postThing?.querySelector('.entry');
         const postBody = postEntry?.querySelector('.usertext-body .md') || postEntry?.querySelector('.expando .md');
 

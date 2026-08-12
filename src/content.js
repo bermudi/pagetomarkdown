@@ -6,17 +6,14 @@ import { extractRedditThread } from './lib/redditExtractor';
 import { preserveActiveTabs } from './lib/tabState';
 import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
 
-class AdvancedMarkdownConverter {
+export class AdvancedMarkdownConverter {
     constructor() {
         this.turndown = null;
         this.debug = false;
         this.defuddleResult = null;
         this.defuddleHtml = null;
-        this.codeBlocks = [];
         this.options = { stripLinks: false, stripImages: false };
         this.metadataOverrides = null;
-
-        console.log('[PageToMD] content script loaded: mermaid-preprocess-v2');
 
         this.initializeConverter();
         this.setupListeners();
@@ -95,30 +92,7 @@ class AdvancedMarkdownConverter {
             }
         });
 
-        this.turndown.addRule('mermaidSvg', {
-            filter: (node) => {
-                const nodeName = (node.nodeName || '').toLowerCase();
-                if (nodeName !== 'svg') return false;
-                const id = node.getAttribute('id') || '';
-                const className = node.getAttribute('class') || '';
-                const roleDesc = node.getAttribute('aria-roledescription') || '';
-                return (
-                    id.startsWith('mermaid-') ||
-                    /\bmermaid\b/i.test(className) ||
-                    /\bflowchart\b/i.test(className) ||
-                    /flowchart/i.test(roleDesc)
-                );
-            },
-            replacement: (_content, node) => {
-                const source = self.extractMermaidSource(node);
-                const fence = self.computeFence(source || '');
-                const body = source ? source : '';
-                return `\n\n${fence}mermaid\n${body}\n${fence}\n\n`;
-            }
-        });
-
         this.prioritizeRule('preformattedCode');
-        this.prioritizeRule('mermaidSvg');
 
         this.turndown.addRule('inlineCode', {
             filter: (node) => node.nodeName === 'CODE' && (!node.parentNode || node.parentNode.nodeName !== 'PRE'),
@@ -219,14 +193,13 @@ class AdvancedMarkdownConverter {
     }
 
     async processPage(options) {
-        console.log('Starting conversion...');
-
         try {
             const debugResult = await browser.storage.local.get('debugLogging');
             this.debug = !!debugResult.debugLogging;
         } catch {
             this.debug = false;
         }
+        this.log('Starting conversion...');
 
         this.metadataOverrides = null;
         this.options = {
@@ -238,7 +211,7 @@ class AdvancedMarkdownConverter {
             const yt = await tryExtractYouTubeTranscript();
             if (yt.found) {
                 await this.sendToBackground(yt.markdown, yt.metadata);
-                console.log('YouTube transcript sent to background.');
+                this.log('YouTube transcript sent to background.');
                 return;
             }
             if (yt.isYouTube) {
@@ -251,7 +224,7 @@ class AdvancedMarkdownConverter {
             const markdown = this.convertToMarkdown(content);
 
             await this.sendToBackground(markdown, metadata);
-            console.log('Conversion sent to background.');
+            this.log('Conversion sent to background.');
         } catch (error) {
             console.error('Processing failed:', error);
             alert('Failed to convert page: ' + (error?.message ?? String(error)));
@@ -308,7 +281,7 @@ class AdvancedMarkdownConverter {
             console.warn('Defuddle failed, falling back to manual extraction:', error);
         }
 
-        console.log('Using body fallback');
+        this.log('Using body fallback');
         this.defuddleHtml = originalBodyClone.innerHTML || '';
         return originalBodyClone;
     }
@@ -540,7 +513,7 @@ class AdvancedMarkdownConverter {
         const sourceHtml = defuddleSeemsToStripSvg ? (document.body?.innerHTML || '') : (this.defuddleHtml || contentElement.innerHTML || '');
 
         if (defuddleSeemsToStripSvg) {
-            console.log('[PageToMD] defuddle svg fallback', {
+            this.log('defuddle svg fallback', {
                 pageHasMermaidSvg,
                 defuddleHtmlLength: defuddleCandidateHtml.length,
                 fallbackHtmlLength: sourceHtml.length
@@ -553,7 +526,7 @@ class AdvancedMarkdownConverter {
         });
         const normalizedHtml = this.normalizeContentHtml(sourceHtml);
 
-        console.log('[PageToMD] html signals', {
+        this.log('html signals', {
             usingDefuddleHtml: !!this.defuddleHtml,
             pageHasMermaidSvg,
             defuddleSeemsToStripSvg,
@@ -639,14 +612,6 @@ class AdvancedMarkdownConverter {
         }
 
         if (mermaidSvgCount > 0) {
-            console.log('[PageToMD] mermaid svg preprocess', {
-                mermaidSvgCount,
-                mermaidReplacedCount,
-                mermaidPlaceholderCount,
-                mermaidEmbeddedSvgCount,
-                rawMermaidSourceCount: rawMermaidSources.length,
-                rawMermaidUsedCount
-            });
             this.log('normalizeContentHtml: mermaid SVG preprocessing', {
                 mermaidSvgCount,
                 mermaidReplacedCount,
@@ -657,7 +622,7 @@ class AdvancedMarkdownConverter {
             });
         }
 
-        console.log('[PageToMD] svg scan', {
+        this.log('svg scan', {
             svgCount: svgs.length,
             mermaidSvgCount,
             mermaidReplacedCount,
@@ -849,55 +814,6 @@ class AdvancedMarkdownConverter {
         return '';
     }
 
-    captureAndReplaceCodeBlocks(contentElement) {
-        this.codeBlocks = [];
-
-        const clone = contentElement.cloneNode(true);
-        const pres = Array.from(clone.querySelectorAll('pre'));
-
-        pres.forEach((pre, index) => {
-            const codeElement = pre.querySelector('code');
-            const language = codeElement ? this.detectLanguage(codeElement) : '';
-            const code = (codeElement?.textContent ?? pre.textContent ?? '').trim();
-            if (!code) return;
-
-            const placeholder = `PAGETOMDCODEBLOCK${index}`;
-            this.codeBlocks.push({ placeholder, language, code });
-
-            const p = clone.ownerDocument.createElement('p');
-            p.textContent = placeholder;
-            pre.replaceWith(p);
-        });
-
-        return clone;
-    }
-
-    restoreCodeBlocks(markdown) {
-        if (!this.codeBlocks.length) return markdown;
-
-        let result = markdown;
-        let replacedTotal = 0;
-
-        for (const block of this.codeBlocks) {
-            const fence = this.computeFence(block.code);
-            const langSuffix = block.language ? block.language : '';
-            const fenced = `\n\n${fence}${langSuffix}\n${block.code}\n${fence}\n\n`;
-
-            const placeholderRe = new RegExp(`\\b${block.placeholder}\\b`, 'g');
-            const occurrences = (result.match(placeholderRe) || []).length;
-            if (occurrences === 0) {
-                this.log('restoreCodeBlocks: placeholder not found', { placeholder: block.placeholder });
-                continue;
-            }
-
-            replacedTotal += occurrences;
-            result = result.replace(placeholderRe, fenced);
-        }
-
-        this.log('restoreCodeBlocks: applied', { blocks: this.codeBlocks.length, replacedTotal });
-        return result;
-    }
-
     cleanupMarkdown(markdown) {
         return markdown.replace(/\n{4,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim();
     }
@@ -1021,4 +937,6 @@ class AdvancedMarkdownConverter {
     }
 }
 
-window.markdownConverter = new AdvancedMarkdownConverter();
+if (typeof window !== 'undefined' && !globalThis.__vitest_worker__) {
+    window.markdownConverter = new AdvancedMarkdownConverter();
+}

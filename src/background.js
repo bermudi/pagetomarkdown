@@ -1,6 +1,6 @@
 import browser from 'webextension-polyfill';
 
-class MarkdownDownloader {
+export class MarkdownDownloader {
     constructor() {
         this.setupEventListeners();
     }
@@ -135,4 +135,6 @@ class MarkdownDownloader {
     }
 }
 
-new MarkdownDownloader();
+if (typeof window !== 'undefined' && !globalThis.__vitest_worker__) {
+    new MarkdownDownloader();
+}

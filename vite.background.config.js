@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
     build: {
         outDir: 'dist',
         emptyOutDir: false,
-        sourcemap: true,
+        sourcemap: mode !== 'production',
         lib: {
             entry: 'src/background.js',
             name: 'PageToMarkdownBackground',
@@ -17,4 +17,4 @@ export default defineConfig({
             }
         }
     }
-});
+}));

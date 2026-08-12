@@ -9,7 +9,30 @@
  *   4. Fallback: scrape visible transcript panel from DOM.
  */
 
+import browser from 'webextension-polyfill';
+
 const YT_WATCH_RE = /^https?:\/\/(www\.)?youtube\.com\/watch\?/;
+
+let ytDebug = false;
+function ytLog(...args) {
+    if (ytDebug) console.log('[PageToMD]', ...args);
+}
+async function updateYtDebug() {
+    try {
+        const result = await browser.storage.local.get('debugLogging');
+        ytDebug = !!result.debugLogging;
+    } catch {
+        ytDebug = false;
+    }
+}
+function extractInnertubeApiKeyFromScripts() {
+    for (const script of document.querySelectorAll('script')) {
+        const text = script.textContent || '';
+        const m = text.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
+        if (m?.[1]) return m[1];
+    }
+    return '';
+}
 
 export function isYouTubeWatchPage() {
     return YT_WATCH_RE.test(window.location.href);
@@ -115,24 +138,15 @@ const LANG_FALLBACK_CHAIN = [
     'en', 'de', 'fr', 'es', 'it', 'zh', 'ja', 'ko', 'pt', 'ru'
 ];
 
-function pickBestTrack(tracks, preferredLang = 'auto') {
+export function pickBestTrack(tracks) {
     if (!tracks || tracks.length === 0) return null;
     const byTwo = (code) => code.toLowerCase().slice(0, 2);
 
-    if (preferredLang !== 'auto') {
-        const exact = tracks.find((t) => t.languageCode === preferredLang);
-        if (exact) return exact;
-        const fuzzy = tracks.find((t) => byTwo(t.languageCode) === byTwo(preferredLang));
-        if (fuzzy) return fuzzy;
-    }
-
-    if (preferredLang === 'auto') {
-        const enTracks = tracks.filter((t) => byTwo(t.languageCode) === 'en');
-        const manualEn = enTracks.find((t) => t.kind !== 'asr');
-        if (manualEn) return manualEn;
-        const autoEn = enTracks.find((t) => t.kind === 'asr');
-        if (autoEn) return autoEn;
-    }
+    const enTracks = tracks.filter((t) => byTwo(t.languageCode) === 'en');
+    const manualEn = enTracks.find((t) => t.kind !== 'asr');
+    if (manualEn) return manualEn;
+    const autoEn = enTracks.find((t) => t.kind === 'asr');
+    if (autoEn) return autoEn;
 
     for (const lang of LANG_FALLBACK_CHAIN) {
         const match = tracks.find((t) => byTwo(t.languageCode) === lang);
@@ -173,8 +187,7 @@ async function fetchTranscriptXml(baseUrl) {
         throw new Error('timedtext xml: empty body');
     }
 
-    // Log first 300 chars so we can see what came back
-    console.log('[PageToMD] timedtext response preview:', text.slice(0, 300));
+    ytLog('timedtext response preview:', text.slice(0, 300));
 
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, 'text/xml');
@@ -213,7 +226,7 @@ async function fetchTranscriptJson3(baseUrl) {
         throw new Error(`timedtext json3 HTTP ${resp.status}: ${text.slice(0, 200)}`);
     }
 
-    console.log('[PageToMD] json3 response preview:', text.slice(0, 300));
+    ytLog('json3 response preview:', text.slice(0, 300));
 
     const data = JSON.parse(text);
     const events = data.events || [];
@@ -279,7 +292,7 @@ function scrapeTranscriptFromDom() {
     }
 
     if (lines.length) {
-        console.log(`[PageToMD] Scraped ${lines.length} lines from DOM panel`);
+        ytLog(`Scraped ${lines.length} lines from DOM panel`);
         return lines;
     }
     return null;
@@ -318,10 +331,16 @@ export async function tryExtractYouTubeTranscript() {
         return { found: false, isYouTube: true, markdown: '', metadata: {} };
     }
 
-    console.log('[PageToMD] YouTube video ID:', videoId);
+    await updateYtDebug();
+    ytLog('YouTube video ID:', videoId);
 
-    const apiKey = extractInnertubeApiKey(document.documentElement.innerHTML);
-    console.log('[PageToMD] API key:', apiKey ? 'found' : 'missing');
+    let htmlCache = null;
+    const getHtml = () => {
+        if (htmlCache === null) htmlCache = document.documentElement.innerHTML;
+        return htmlCache;
+    };
+    const apiKey = extractInnertubeApiKeyFromScripts() || extractInnertubeApiKey(getHtml());
+    ytLog('API key:', apiKey ? 'found' : 'missing');
 
     let captionTracks = null;
     let playerResponse = null;
@@ -333,7 +352,7 @@ export async function tryExtractYouTubeTranscript() {
         try {
             playerResponse = await fetchPlayerResponse(videoId, apiKey);
             captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-            console.log('[PageToMD] captionTracks from ANDROID player API:', captionTracks?.length ?? 'none');
+            ytLog('captionTracks from ANDROID player API:', captionTracks?.length ?? 'none');
         } catch (err) {
             console.warn('[PageToMD] ANDROID player API failed:', err);
         }
@@ -344,9 +363,9 @@ export async function tryExtractYouTubeTranscript() {
     /* -------------------------------------------------------------- */
     if (!captionTracks || captionTracks.length === 0) {
         try {
-            captionTracks = extractCaptionTracksFromHtml(document.documentElement.innerHTML);
+            captionTracks = extractCaptionTracksFromHtml(getHtml());
             if (captionTracks) {
-                console.log('[PageToMD] captionTracks from HTML regex:', captionTracks.length);
+                ytLog('captionTracks from HTML regex:', captionTracks.length);
             }
         } catch (err) {
             console.warn('[PageToMD] HTML regex extract failed:', err);
@@ -359,10 +378,10 @@ export async function tryExtractYouTubeTranscript() {
     if (!captionTracks || captionTracks.length === 0) {
         playerResponse = extractYtInitialPlayerResponseFromDom();
         if (playerResponse) {
-            console.log('[PageToMD] ytInitialPlayerResponse parsed from DOM');
+            ytLog('ytInitialPlayerResponse parsed from DOM');
             captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
             if (captionTracks) {
-                console.log('[PageToMD] captionTracks from DOM parse:', captionTracks.length);
+                ytLog('captionTracks from DOM parse:', captionTracks.length);
             }
         }
     }
@@ -373,14 +392,14 @@ export async function tryExtractYouTubeTranscript() {
     let lines = [];
 
     if (captionTracks && captionTracks.length > 0) {
-        const track = pickBestTrack(captionTracks, 'auto');
+        const track = pickBestTrack(captionTracks);
         if (track?.baseUrl) {
-            console.log('[PageToMD] Selected track:', track.languageCode, track.kind || 'manual');
+            ytLog('Selected track:', track.languageCode, track.kind || 'manual');
 
             // Try XML
             try {
                 lines = await fetchTranscriptXml(track.baseUrl);
-                console.log('[PageToMD] XML fetch lines:', lines.length);
+                ytLog('XML fetch lines:', lines.length);
             } catch (err) {
                 console.warn('[PageToMD] XML fetch failed:', err);
             }
@@ -389,7 +408,7 @@ export async function tryExtractYouTubeTranscript() {
             if (lines.length === 0) {
                 try {
                     lines = await fetchTranscriptJson3(track.baseUrl);
-                    console.log('[PageToMD] JSON3 fetch lines:', lines.length);
+                    ytLog('JSON3 fetch lines:', lines.length);
                 } catch (err) {
                     console.warn('[PageToMD] JSON3 fetch failed:', err);
                 }
@@ -405,7 +424,7 @@ export async function tryExtractYouTubeTranscript() {
     }
 
     if (!lines || lines.length === 0) {
-        console.log('[PageToMD] No transcript available for this YouTube video');
+        ytLog('No transcript available for this YouTube video');
         return { found: false, isYouTube: true, markdown: '', metadata: {} };
     }
 

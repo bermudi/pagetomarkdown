@@ -5,6 +5,9 @@ build/
 dist/
 web-ext-artifacts/
 
+# GIMP source
+*.xcf
+
 # Dependencies
 node_modules/
 

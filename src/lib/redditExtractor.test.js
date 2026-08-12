@@ -110,4 +110,19 @@ describe('redditExtractor', () => {
         const doc = createDocument(sampleHtml, 'https://example.com/post');
         expect(extractRedditThread(doc)).toBeNull();
     });
+
+    it('returns null on modern reddit UI without #siteTable (falls back to defuddle)', () => {
+        const modernHtml = `<shreddit-app><shreddit-post><div>Modern post body</div></shreddit-post></shreddit-app>`;
+        const modernUrl = 'https://www.reddit.com/r/test/comments/abc123/thread/';
+        const doc = createDocument(modernHtml, modernUrl);
+        expect(isRedditThreadPage(doc)).toBe(true);
+        expect(extractRedditThread(doc)).toBeNull();
+    });
+
+    it('still extracts old reddit when #siteTable present', () => {
+        const doc = createDocument(sampleHtml, 'https://www.reddit.com/r/test/comments/abc123/old/');
+        const result = extractRedditThread(doc);
+        expect(result).not.toBeNull();
+        expect(result.article.querySelector('h1')?.textContent).toContain('ELI5 title');
+    });
 });

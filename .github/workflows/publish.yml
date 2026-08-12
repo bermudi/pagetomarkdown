@@ -43,6 +43,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Lint (eslint)
+        run: pnpm run lint
+
       - name: Sync manifest version from package.json
         run: |
           PKG_VER=$(jq -r .version package.json)
@@ -74,7 +77,7 @@ jobs:
             --source-dir . \
             --artifacts-dir web-ext-artifacts \
             --channel listed \
-            --ignore-files "web-ext-artifacts/**" "node_modules/**" ".git/**" ".github/**" "*.zip" "*.xpi" "fix_deepwiki.py" "ROADMAP.md" "pnpm-lock.yaml" "pnpm-workspace.yaml" "vite.*.config.js" "build_zip.sh" "src/**" "package.json" "LICENSE" "README.md" "icons/*.xcf" "dist/**/*.map"
+            --ignore-files "web-ext-artifacts/**" "node_modules/**" ".git/**" ".github/**" "*.zip" "*.xpi" "tools/**" "tests/**" "ROADMAP.md" "pnpm-lock.yaml" "pnpm-workspace.yaml" "vite.*.config.js" "build_zip.sh" "src/**" "package.json" "LICENSE" "README.md" "icons/*.xcf"
 
       - name: Upload signed XPI artifact
         uses: actions/upload-artifact@v4

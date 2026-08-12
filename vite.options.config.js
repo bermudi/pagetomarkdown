@@ -2,12 +2,12 @@ import { defineConfig } from 'vite';
 import path from 'path';
 import fs from 'fs';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
     base: './',
     build: {
         outDir: 'dist',
         emptyOutDir: false,
-        sourcemap: true,
+        sourcemap: mode !== 'production',
         rollupOptions: {
             input: path.resolve(__dirname, 'src/options.html'),
             output: {
@@ -46,4 +46,4 @@ export default defineConfig({
             }
         }
     ]
-});
+}));
