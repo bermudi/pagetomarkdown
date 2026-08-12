@@ -39,6 +39,8 @@ Thumbs.db
 # Testing
 coverage/
 *.log
+.pytest_cache/
+__pycache__/
 
 # Local development
 Archive.zip
