@@ -158,4 +158,112 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       expect(doc.querySelectorAll('pre').length).toBe(2);
     });
   });
+
+  describe('post-defuddle-0.19 fallback guards', () => {
+    const fragment = (html) => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return doc.body;
+    };
+
+    describe('pruneNoiseElements', () => {
+      it('removes hidden elements, templates, and skip links, keeps visible content', () => {
+        const body = fragment(`
+          <a href="#main">Skip to main content</a>
+          <div id="dnd" style="display: none;">To pick up a draggable item</div>
+          <div style="visibility:hidden">ghost</div>
+          <div hidden>hidden attr</div>
+          <template><p>tpl</p></template>
+          <p>keep me</p>
+        `);
+        const counts = converter.pruneNoiseElements(body);
+        expect(body.textContent).toContain('keep me');
+        expect(body.textContent).not.toContain('draggable');
+        expect(body.textContent).not.toContain('ghost');
+        expect(body.textContent).not.toContain('hidden attr');
+        expect(body.textContent).not.toContain('tpl');
+        expect(body.querySelector('a')).toBeNull();
+        expect(counts.skipLinks).toBe(1);
+        expect(counts.hidden).toBe(3);
+        expect(counts.templates).toBe(1);
+      });
+
+      it('keeps math renderers that hide their visual tree with aria-hidden', () => {
+        const body = fragment(`
+          <span class="katex"><span class="katex-html" aria-hidden="true">x²</span></span>
+          <div aria-hidden="true">decorative icon</div>
+        `);
+        converter.pruneNoiseElements(body);
+        expect(body.textContent).toContain('x²');
+        expect(body.textContent).not.toContain('decorative icon');
+      });
+    });
+
+    describe('isSubstantiveExtraction', () => {
+      it('accepts a substantive extraction', () => {
+        const parsed = fragment(`<p>${'word '.repeat(40)}</p>`);
+        const body = fragment(`<p>${'word '.repeat(200)}</p>`);
+        expect(converter.isSubstantiveExtraction(parsed, body)).toBe(true);
+      });
+
+      it('rejects a thin extraction from a content-rich page', () => {
+        const parsed = fragment('<p>Done</p>');
+        const body = fragment(`<p>${'word '.repeat(200)}</p>`);
+        expect(converter.isSubstantiveExtraction(parsed, body)).toBe(false);
+      });
+
+      it('trusts defuddle on a tiny page', () => {
+        const parsed = fragment('<p>Done</p>');
+        const body = fragment('<p>tiny</p>');
+        expect(converter.isSubstantiveExtraction(parsed, body)).toBe(true);
+      });
+    });
+
+    describe('shouldFallbackToOriginalCodeBlocks', () => {
+      const meaningful = '<pre><code>const x = 1234567890abcdef;</code></pre>';
+
+      it('falls back when meaningful code blocks were lost', () => {
+        const original = fragment(`<div>${meaningful}${meaningful}</div>`);
+        const parsed = fragment('<p>no code here</p>');
+        expect(converter.shouldFallbackToOriginalCodeBlocks(original, parsed)).toBe(true);
+      });
+
+      it('keeps defuddle when all code survived', () => {
+        const original = fragment(`<div>${meaningful}${meaningful}</div>`);
+        const parsed = fragment(`<div>${meaningful}${meaningful}</div><p>text</p>`);
+        expect(converter.shouldFallbackToOriginalCodeBlocks(original, parsed)).toBe(false);
+      });
+
+      it('keeps defuddle when only trivial pre remnants were dropped', () => {
+        const original = fragment('<pre><code>hi</code></pre>');
+        const parsed = fragment('<p>text</p>');
+        expect(converter.shouldFallbackToOriginalCodeBlocks(original, parsed)).toBe(false);
+      });
+    });
+
+    describe('extractMainContent integration (SPA shell page)', () => {
+      it('never ships skip links or hidden live-region text', () => {
+        const originalBody = document.body.innerHTML;
+        try {
+          document.body.innerHTML = `
+            <a href="#main-content" aria-label="Skip to main content">Skip to main content</a>
+            <main>
+              <h1>Conversation</h1>
+              <p>User message one about agents and transcripts.</p>
+              <p>Assistant reply with a fair amount of prose so defuddle has something to score.</p>
+            </main>
+            <div style="display: none;">To pick up a draggable item, press the space bar.</div>
+            <div hidden>invisible junk</div>
+          `;
+          const result = converter.extractMainContent();
+          const text = result.textContent || '';
+          expect(text).toContain('Assistant reply');
+          expect(text).not.toContain('Skip to main content');
+          expect(text).not.toContain('draggable item');
+          expect(text).not.toContain('invisible junk');
+        } finally {
+          document.body.innerHTML = originalBody;
+        }
+      });
+    });
+  });
 });

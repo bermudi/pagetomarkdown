@@ -14,6 +14,7 @@ export class AdvancedMarkdownConverter {
         this.defuddleHtml = null;
         this.options = { stripLinks: false, stripImages: false };
         this.metadataOverrides = null;
+        this.usedBodyFallback = false;
 
         this.initializeConverter();
         this.setupListeners();
@@ -202,6 +203,7 @@ export class AdvancedMarkdownConverter {
         this.log('Starting conversion...');
 
         this.metadataOverrides = null;
+        this.usedBodyFallback = false;
         this.options = {
             stripLinks: !!options?.stripLinks,
             stripImages: !!options?.stripImages
@@ -252,7 +254,9 @@ export class AdvancedMarkdownConverter {
 
         const originalBodyClone = document.body.cloneNode(true);
         const tabStateResult = this.preserveInteractiveState(originalBodyClone);
+        const prunedNoise = this.pruneNoiseElements(originalBodyClone);
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
+        this.usedBodyFallback = false;
 
         try {
             this.log('Defuddle: parsing document');
@@ -261,52 +265,136 @@ export class AdvancedMarkdownConverter {
             const result = defuddle.parse();
             this.defuddleResult = result;
             this.defuddleHtml = result?.content ?? null;
-            this.log('Interactive-state preprocessing complete', tabStateResult);
+            this.log('Interactive-state preprocessing complete', { ...tabStateResult, prunedNoise });
 
-            if (result?.content) {
-                const parsedDoc = new DOMParser().parseFromString(result.content, 'text/html');
-                const parsedBody = parsedDoc.body || parsedDoc.documentElement;
-                const parsedPreCount = parsedBody ? parsedBody.querySelectorAll('pre').length : 0;
+            const parsedBody = this.parseContentFragment(result?.content);
+            if (parsedBody && this.isSubstantiveExtraction(parsedBody, originalBodyClone)) {
+                const parsedPreCount = parsedBody.querySelectorAll('pre').length;
 
-                if (this.shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount, originalBodyClone)) {
-                    console.warn('[PageToMD] Defuddle removed code blocks – falling back to original DOM');
+                if (this.shouldFallbackToOriginalCodeBlocks(originalBodyClone, parsedBody)) {
+                    console.warn('[PageToMD] Defuddle removed code blocks – falling back to page DOM');
                     this.log('Hybrid fallback triggered', { originalPreCount, parsedPreCount });
                     this.defuddleHtml = originalBodyClone.innerHTML || '';
+                    this.usedBodyFallback = true;
                     return originalBodyClone;
                 }
 
                 return parsedBody;
             }
+
+            this.log('Defuddle content missing or too thin – using body fallback', {
+                hadContent: !!result?.content,
+                extractedTextLength: (parsedBody?.textContent || '').trim().length,
+                bodyTextLength: (originalBodyClone.textContent || '').trim().length,
+                prunedNoise
+            });
         } catch (error) {
             console.warn('Defuddle failed, falling back to manual extraction:', error);
         }
 
         this.log('Using body fallback');
         this.defuddleHtml = originalBodyClone.innerHTML || '';
+        this.usedBodyFallback = true;
         return originalBodyClone;
     }
 
-    shouldFallbackToOriginalCodeBlocks(originalPreCount, parsedPreCount, originalBodyClone) {
+    shouldFallbackToOriginalCodeBlocks(originalBody, parsedBody) {
+        const originalPreCount = originalBody ? originalBody.querySelectorAll('pre').length : 0;
         if (originalPreCount === 0) {
             return false;
         }
 
-        if (parsedPreCount === 0) {
-            return true;
+        const parsedPreCount = parsedBody ? parsedBody.querySelectorAll('pre').length : 0;
+        if (parsedPreCount >= originalPreCount) {
+            return false;
         }
 
-        if (parsedPreCount < originalPreCount) {
-            const originalHasCode = this.hasMeaningfulCodeBlocks(originalBodyClone);
-            const parsedHasCode = this.hasMeaningfulCodeBlocks(
-                this.createDocumentFromHtml(this.defuddleHtml)?.body || null
-            );
+        // Only abandon defuddle's selection when real code blocks were lost;
+        // trivial <pre> remnants are not worth a full-page fallback.
+        return this.hasMeaningfulCodeBlocks(originalBody) && !this.hasMeaningfulCodeBlocks(parsedBody);
+    }
 
-            if (originalHasCode && !parsedHasCode) {
-                return true;
+    parseContentFragment(html) {
+        if (!html) return null;
+        try {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            return doc.body || doc.documentElement;
+        } catch (error) {
+            console.warn('[PageToMD] Failed to parse defuddle content', error);
+            return null;
+        }
+    }
+
+    /**
+     * Defuddle occasionally returns an empty or near-empty selection on
+     * SPA-style pages (chat transcripts, dashboards) whose content lives in
+     * anonymous markup. Treat that as an extraction failure so the caller
+     * falls back to the noise-pruned page body instead of shipping an
+     * almost empty document.
+     */
+    isSubstantiveExtraction(parsedBody, originalBody) {
+        const extractedLength = (parsedBody?.textContent || '').replace(/\s+/g, '').length;
+        if (extractedLength >= 64) return true;
+
+        // A tiny page has nothing more to offer; trust defuddle regardless.
+        const bodyLength = (originalBody?.textContent || '').replace(/\s+/g, '').length;
+        return bodyLength < 512;
+    }
+
+    /**
+     * Remove elements that are invisible to users but very visible to
+     * turndown: screen-reader live regions, skip links, hidden templates.
+     * Only attributes and inline styles are inspected – the clone is
+     * detached from the document, so class-driven hiding (sr-only etc.)
+     * cannot be computed here.
+     */
+    pruneNoiseElements(root) {
+        if (!root) return { hidden: 0, ariaHidden: 0, skipLinks: 0, templates: 0 };
+
+        const counts = { hidden: 0, ariaHidden: 0, skipLinks: 0, templates: 0 };
+        // KaTeX/MathJax mark their *rendered* output aria-hidden; stripping it
+        // would destroy math. Leave anything that looks like a math tree.
+        const mathish = /(^|[\s_-])(katex|mathjax|mjx|latex|math)([\s_-]|$)/i;
+
+        root.querySelectorAll('template').forEach((el) => {
+            el.remove();
+            counts.templates += 1;
+        });
+
+        root.querySelectorAll('[hidden]').forEach((el) => {
+            el.remove();
+            counts.hidden += 1;
+        });
+
+        root.querySelectorAll('[style]').forEach((el) => {
+            const style = el.getAttribute('style') || '';
+            if (/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test(style)) {
+                el.remove();
+                counts.hidden += 1;
             }
-        }
+        });
 
-        return false;
+        root.querySelectorAll('[aria-hidden="true"]').forEach((el) => {
+            const ownClass = el.getAttribute('class') || '';
+            const parentClass = el.parentElement?.getAttribute('class') || '';
+            if (mathish.test(ownClass) || mathish.test(parentClass)) return;
+            el.remove();
+            counts.ariaHidden += 1;
+        });
+
+        root.querySelectorAll('a').forEach((el) => {
+            const text = (el.textContent || '').trim();
+            if (/^skip to (the )?(main )?content$/i.test(text)) {
+                el.remove();
+                counts.skipLinks += 1;
+            }
+        });
+
+        const total = counts.hidden + counts.ariaHidden + counts.skipLinks + counts.templates;
+        if (total > 0) {
+            this.log('pruneNoiseElements removed', counts);
+        }
+        return counts;
     }
 
     preserveInteractiveState(root) {
@@ -348,16 +436,6 @@ export class AdvancedMarkdownConverter {
             const text = (codeEl?.textContent ?? pre.textContent ?? '').trim();
             return text.length > 10;
         });
-    }
-
-    createDocumentFromHtml(html) {
-        if (!html) return null;
-        try {
-            return new DOMParser().parseFromString(html, 'text/html');
-        } catch (error) {
-            console.warn('[PageToMD] Failed to parse HTML for comparison', error);
-            return null;
-        }
     }
 
     isOnPoeConversationPage() {
@@ -875,7 +953,11 @@ export class AdvancedMarkdownConverter {
         };
 
         const text = doc.body.textContent || '';
-        metadata.wordCount = def?.wordCount ?? text.trim().split(/\s+/).length;
+        // defuddle's wordCount describes its own (possibly failed) selection;
+        // when we fell back to the page body, count what we actually ship.
+        metadata.wordCount = (!this.usedBodyFallback && def?.wordCount)
+            ? def.wordCount
+            : text.trim().split(/\s+/).length;
         metadata.readingTime = Math.ceil(metadata.wordCount / 200);
 
         if (this.metadataOverrides) {

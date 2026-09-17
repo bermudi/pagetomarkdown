@@ -16,7 +16,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
   Click the toolbar button to extract and save the current page as a `.md` file. Hold `Shift` to toggle the default "keep links/images" vs "plain text" mode.
 
 - **Readable content extraction**
-  Uses [defuddle](https://github.com/kepano/defuddle) to pull out the main article content and avoid chrome, sidebars, ads, and unrelated UI where possible. Specialized extractors run first for YouTube transcripts, Poe conversations, and old Reddit threads. Falls back to the page body clone if defuddle can't parse. Hidden tab panels are pruned via `preserveActiveTabs` so only the active tab's code survives.
+  Uses [defuddle](https://github.com/kepano/defuddle) to pull out the main article content and avoid chrome, sidebars, ads, and unrelated UI where possible. Specialized extractors run first for YouTube transcripts, Poe conversations, and old Reddit threads. Falls back to the page body clone if defuddle can't parse or returns an implausibly thin selection (e.g. SPA chat transcripts). The body clone is scrubbed of invisible chrome first — `display:none`/`visibility:hidden` elements, `[hidden]`, `[aria-hidden="true"]` (math renderers exempted), `<template>`, and skip-to-content links — so screen-reader live regions and skip links never reach the markdown. Hidden tab panels are pruned via `preserveActiveTabs` so only the active tab's code survives.
 
 - **High‑quality Markdown**
   Uses `turndown` + GFM plugin with custom rules for:
@@ -51,7 +51,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
    - Reads `debugLogging` from storage to gate diagnostics (`this.log()`).
    - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing and DOM scraping.
    - Else tries Poe conversation transcript (`poe.com` chat messages) and Reddit thread extractor (`old.reddit.com` via `#siteTable .thing.link`; modern `shreddit` UI falls through).
-   - Else clones `document.body`, runs `preserveActiveTabs`, passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks.
+   - Else clones `document.body`, runs `preserveActiveTabs`, prunes invisible chrome (`pruneNoiseElements`), passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks or returns a near-empty selection.
    - Collects metadata from `defuddle` result + meta tags.
    - Converts the resulting HTML to Markdown via `TurndownService` + GFM, after `normalizeContentHtml` preprocessing (mermaid SVG → `pre.language-mermaid`, `pre` → normalized `code` with language).
 4. `content.js` posts `{ markdown, metadata }` back via `browser.runtime.sendMessage`.
