@@ -189,12 +189,36 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
 
       it('keeps math renderers that hide their visual tree with aria-hidden', () => {
         const body = fragment(`
-          <span class="katex"><span class="katex-html" aria-hidden="true">x²</span></span>
+          <span class="katex"><span class="katex-html" aria-hidden="true">x²<span class="wrapper"><span aria-hidden="true">+y²</span></span></span></span>
+          <mjx-container aria-hidden="true"><mjx-row>x</mjx-row></mjx-container>
           <div aria-hidden="true">decorative icon</div>
         `);
         converter.pruneNoiseElements(body);
         expect(body.textContent).toContain('x²');
+        expect(body.textContent).toContain('+y²');
+        expect(body.textContent).toContain('x');
         expect(body.textContent).not.toContain('decorative icon');
+      });
+
+      it('keeps an aria-hidden subtree holding most of the page text (modal-open pages)', () => {
+        const body = fragment(`
+          <div id="page-wrapper" aria-hidden="true">
+            <p>${'Real article text. '.repeat(30)}</p>
+          </div>
+          <div id="modal" role="dialog"><button>Close</button></div>
+        `);
+        converter.pruneNoiseElements(body);
+        expect(body.textContent).toContain('Real article text.');
+      });
+
+      it('ignores display:none inside url() in inline styles', () => {
+        const body = fragment(`
+          <div style="background:url('data:image/svg+xml;display:none,xyz')">visible</div>
+          <div style="display:none">gone</div>
+        `);
+        converter.pruneNoiseElements(body);
+        expect(body.textContent).toContain('visible');
+        expect(body.textContent).not.toContain('gone');
       });
     });
 
@@ -237,6 +261,15 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
         const original = fragment('<pre><code>hi</code></pre>');
         const parsed = fragment('<p>text</p>');
         expect(converter.shouldFallbackToOriginalCodeBlocks(original, parsed)).toBe(false);
+      });
+    });
+
+    describe('extractMetadata', () => {
+      it('counts words from the shipped content, not the live document', () => {
+        const contentElement = fragment(`<main><p>one two three four five</p></main>`);
+        const metadata = converter.extractMetadata(contentElement);
+        expect(metadata.wordCount).toBe(5);
+        expect(metadata.readingTime).toBe(1);
       });
     });
 

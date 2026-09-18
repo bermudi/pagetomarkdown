@@ -222,7 +222,7 @@ export class AdvancedMarkdownConverter {
             }
 
             const content = this.extractMainContent();
-            const metadata = this.extractMetadata();
+            const metadata = this.extractMetadata(content);
             const markdown = this.convertToMarkdown(content);
 
             await this.sendToBackground(markdown, metadata);
@@ -353,8 +353,16 @@ export class AdvancedMarkdownConverter {
 
         const counts = { hidden: 0, ariaHidden: 0, skipLinks: 0, templates: 0 };
         // KaTeX/MathJax mark their *rendered* output aria-hidden; stripping it
-        // would destroy math. Leave anything that looks like a math tree.
+        // would destroy math. The check walks all ancestors because real math
+        // trees nest aria-hidden spans with generic classes.
         const mathish = /(^|[\s_-])(katex|mathjax|mjx|latex|math)([\s_-]|$)/i;
+        const isMathSubtree = (el) => {
+            for (let anc = el; anc && anc !== root; anc = anc.parentElement) {
+                if (mathish.test(anc.getAttribute?.('class') || '')) return true;
+                if (/^mjx-/i.test(anc.tagName || '')) return true;
+            }
+            return false;
+        };
 
         root.querySelectorAll('template').forEach((el) => {
             el.remove();
@@ -367,17 +375,23 @@ export class AdvancedMarkdownConverter {
         });
 
         root.querySelectorAll('[style]').forEach((el) => {
-            const style = el.getAttribute('style') || '';
+            const style = (el.getAttribute('style') || '').replace(/url\([^)]*\)/gi, '');
             if (/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test(style)) {
                 el.remove();
                 counts.hidden += 1;
             }
         });
 
+        // aria-hidden marks content invisible to screen readers, not to
+        // sighted users. Modal implementations (react-aria, Bootstrap) flip
+        // aria-hidden on the whole page wrapper behind a dialog – removing
+        // that would delete the real content. So: keep math trees, and keep
+        // any aria-hidden subtree that holds most of the page's text.
+        const totalTextLength = (root.textContent || '').length;
         root.querySelectorAll('[aria-hidden="true"]').forEach((el) => {
-            const ownClass = el.getAttribute('class') || '';
-            const parentClass = el.parentElement?.getAttribute('class') || '';
-            if (mathish.test(ownClass) || mathish.test(parentClass)) return;
+            if (isMathSubtree(el)) return;
+            const share = totalTextLength > 0 ? (el.textContent || '').length / totalTextLength : 0;
+            if (share > 0.5) return;
             el.remove();
             counts.ariaHidden += 1;
         });
@@ -929,7 +943,7 @@ export class AdvancedMarkdownConverter {
         return '';
     }
 
-    extractMetadata() {
+    extractMetadata(contentElement) {
         const doc = document;
 
         const def = this.defuddleResult;
@@ -952,7 +966,9 @@ export class AdvancedMarkdownConverter {
             readingTime: 0
         };
 
-        const text = doc.body.textContent || '';
+        // Count what we actually ship – the extraction or pruned fallback –
+        // not the live document with all of its chrome.
+        const text = (contentElement || doc.body).textContent || '';
         // defuddle's wordCount describes its own (possibly failed) selection;
         // when we fell back to the page body, count what we actually ship.
         metadata.wordCount = (!this.usedBodyFallback && def?.wordCount)
