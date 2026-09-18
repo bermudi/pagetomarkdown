@@ -3,7 +3,6 @@ allowBuilds:
 onlyBuiltDependencies:
   - esbuild
 overrides:
-  "@xmldom/xmldom": "0.8.13"
   picomatch: "4.0.4"
   form-data: "4.0.6"
   shell-quote: "1.10.0"
