@@ -12,7 +12,8 @@ import {
     isTrackForVideo,
     scrapeTranscriptFromDom,
     findTranscriptTriggerButton,
-    openTranscriptPanelAndScrape
+    openTranscriptPanelAndScrape,
+    parseTranscriptFromPanelContent
 } from './youtubeTranscript.js';
 
 const VIDEO_URL = (id) => `https://www.youtube.com/api/timedtext?v=${id}&lang=en&signature=abc`;
@@ -270,5 +271,66 @@ describe('openTranscriptPanelAndScrape', () => {
         expect(lines).toBeNull();
         expect(panel.getAttribute('visibility')).toBe('ENGAGEMENT_PANEL_VISIBILITY_HIDDEN');
         expect(expander.getAttribute('expanded')).toBe('false');
+    });
+});
+
+describe('parseTranscriptFromPanelContent (yt-action payload)', () => {
+    it('extracts timestamped lines from a real captured payload shape', () => {
+        const content = {
+            sectionListRenderer: {
+                contents: [
+                    {
+                        itemSectionRenderer: {
+                            contents: [
+                                {
+                                    macroMarkersPanelItemViewModel: {
+                                        item: {
+                                            timelineItemViewModel: {
+                                                timestamp: '0:00',
+                                                contentItems: [
+                                                    {
+                                                        transcriptSegmentViewModel: {
+                                                            simpleText: 'Hey everybody, welcome back.',
+                                                            timestamp: '0:00'
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    macroMarkersPanelItemViewModel: {
+                                        item: {
+                                            timelineItemViewModel: {
+                                                timestamp: '0:07',
+                                                contentItems: [
+                                                    {
+                                                        transcriptSegmentViewModel: {
+                                                            simpleText: '  Second   cue  ',
+                                                            timestamp: '0:07'
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        };
+        expect(parseTranscriptFromPanelContent(content)).toEqual([
+            '[0:00] Hey everybody, welcome back.',
+            '[0:07] Second cue'
+        ]);
+    });
+
+    it('returns null for empty or malformed content', () => {
+        expect(parseTranscriptFromPanelContent(null)).toBeNull();
+        expect(parseTranscriptFromPanelContent({})).toBeNull();
+        expect(parseTranscriptFromPanelContent({ sectionListRenderer: { contents: [] } })).toBeNull();
     });
 });

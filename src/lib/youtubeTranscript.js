@@ -350,6 +350,71 @@ export function scrapeTranscriptFromDom() {
 const PANEL_POLL_INTERVAL_MS = 400;
 const PANEL_OPEN_TIMEOUT_MS = 15000;
 
+/* ------------------------------------------------------------------ */
+/*  6a. Harvest transcript payloads from the page's command bus       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * YouTube's page fires `yt-action` CustomEvents as its UI command bus.
+ * When a transcript panel opens/closes, `yt-engagement-panel-visible-changed`
+ * carries the ENTIRE transcript as structured JSON in args[0].content —
+ * even when the panel flashes open and auto-closes. Events cross content-
+ * script world boundaries, so listening from the extension captures
+ * transcript data whenever the page loads it, however it was triggered.
+ */
+let harvestedTranscript = null;
+let harvestListenerAttached = false;
+
+export function parseTranscriptFromPanelContent(content) {
+    const items = content?.sectionListRenderer?.contents || [];
+    const lines = [];
+    for (const item of items) {
+        const markers = item?.itemSectionRenderer?.contents || [];
+        for (const mk of markers) {
+            const tl = mk?.macroMarkersPanelItemViewModel?.item?.timelineItemViewModel;
+            if (!tl) continue;
+            const ts = tl.timestamp || '';
+            const texts = (tl.contentItems || [])
+                .map((ci) => ci?.transcriptSegmentViewModel?.simpleText || '')
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (texts) lines.push(ts ? `[${ts}] ${texts}` : texts);
+        }
+    }
+    return lines.length ? lines : null;
+}
+
+export function ensureTranscriptHarvestListener() {
+    if (harvestListenerAttached) return;
+    harvestListenerAttached = true;
+    window.addEventListener(
+        'yt-action',
+        (e) => {
+            try {
+                const d = e.detail;
+                if (d?.actionName !== 'yt-engagement-panel-visible-changed') return;
+                const a = d.args?.[0];
+                if (!a || !/transcript/i.test(String(a.panelIdentifier || ''))) return;
+                const lines = parseTranscriptFromPanelContent(a.content);
+                if (lines?.length) {
+                    harvestedTranscript = lines;
+                    ytTrace(`harvested ${lines.length} transcript lines from yt-action payload`);
+                }
+            } catch {
+                // a listener must never throw into the page
+            }
+        },
+        true
+    );
+}
+
+// Attach as soon as the content script loads, so transcripts harvested from
+// panel activity earlier in the session are available to later conversions.
+if (typeof window !== 'undefined') {
+    ensureTranscriptHarvestListener();
+}
+
 const TRANSCRIPT_PANEL_SELECTORS = [
     'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]',
     'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]'
@@ -436,7 +501,37 @@ export async function openTranscriptPanelAndScrape() {
             return null;
         }
 
-        if (!wasPanelVisible) trigger.click();
+        if (!wasPanelVisible) {
+            trigger.click();
+            // Some button stacks ignore bare clicks; follow up with a full
+            // synthetic pointer sequence shortly after.
+            setTimeout(() => {
+                try {
+                    const rect = trigger.getBoundingClientRect();
+                    const base = {
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true,
+                        view: window,
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.top + rect.height / 2,
+                        button: 0
+                    };
+                    trigger.dispatchEvent(
+                        new PointerEvent('pointerdown', { ...base, buttons: 1, isPrimary: true, pointerId: 1, pointerType: 'mouse' })
+                    );
+                    trigger.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1, detail: 1 }));
+                    trigger.dispatchEvent(
+                        new PointerEvent('pointerup', { ...base, buttons: 0, isPrimary: true, pointerId: 1, pointerType: 'mouse' })
+                    );
+                    trigger.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0, detail: 1 }));
+                    trigger.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0, detail: 1 }));
+                } catch {
+                    // best-effort gesture; the plain click may already have worked
+                }
+            }, 150);
+            trigger.scrollIntoView({ block: 'center' });
+        }
 
         const deadline = Date.now() + PANEL_OPEN_TIMEOUT_MS;
         while (Date.now() < deadline) {
@@ -449,6 +544,10 @@ export async function openTranscriptPanelAndScrape() {
                     ytTrace(`panel scrape produced ${lines.length} lines`);
                     return lines;
                 }
+            }
+            if (harvestedTranscript?.length) {
+                ytTrace('using harvested yt-action transcript');
+                return harvestedTranscript;
             }
         }
 
@@ -496,6 +595,7 @@ export async function tryExtractYouTubeTranscript() {
     }
 
     await updateYtDebug();
+    ensureTranscriptHarvestListener();
     ytLog('YouTube video ID:', videoId);
 
     let htmlCache = null;
@@ -604,6 +704,11 @@ export async function tryExtractYouTubeTranscript() {
         } catch (err) {
             ytTrace('Panel-driven transcript scrape failed:', err?.message ?? err);
         }
+    }
+
+    if (lines.length === 0 && harvestedTranscript?.length) {
+        ytTrace('using harvested yt-action transcript (post-panel-attempt)');
+        lines = harvestedTranscript;
     }
 
     if (!lines || lines.length === 0) {
