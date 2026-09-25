@@ -96,6 +96,40 @@ describe('scrapeTranscriptFromDom', () => {
         expect(scrapeTranscriptFromDom()).toEqual(['[0:02] Hello world', '[0:05] Second line']);
     });
 
+    it('collects lines from the modern transcript panel (PAmodern_transcript_view)', () => {
+        const panel = document.createElement('ytd-engagement-panel-section-list-renderer');
+        panel.setAttribute('target-id', 'PAmodern_transcript_view');
+
+        const seg1 = document.createElement('transcript-segment-view-model');
+        const ts1 = document.createElement('div');
+        ts1.className = 'ytwTranscriptSegmentViewModelTimestamp';
+        ts1.textContent = '0:00';
+        const a11y1 = document.createElement('div');
+        a11y1.className = 'ytwTranscriptSegmentViewModelTimestampA11yLabel';
+        a11y1.textContent = '0 segundos';
+        const text1 = document.createElement('span');
+        text1.setAttribute('role', 'text');
+        text1.textContent = 'Hey everybody, welcome back.';
+        seg1.append(ts1, a11y1, text1);
+
+        const seg2 = document.createElement('transcript-segment-view-model');
+        const ts2 = document.createElement('div');
+        ts2.className = 'ytwTranscriptSegmentViewModelTimestamp ytwTranscriptSegmentViewModelTimestampActive';
+        ts2.textContent = '0:07';
+        const text2 = document.createElement('span');
+        text2.setAttribute('role', 'text');
+        text2.textContent = '  Second   cue  ';
+        seg2.append(ts2, text2);
+
+        panel.append(seg1, seg2);
+        document.body.append(panel);
+
+        expect(scrapeTranscriptFromDom()).toEqual([
+            '[0:00] Hey everybody, welcome back.',
+            '[0:07] Second cue'
+        ]);
+    });
+
     it('returns null when no panel exists', () => {
         expect(scrapeTranscriptFromDom()).toBeNull();
     });

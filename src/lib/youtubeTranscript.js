@@ -303,27 +303,44 @@ function querySelectorAllDeep(root, selector) {
 }
 
 export function scrapeTranscriptFromDom() {
+    // Old UI: ytd-transcript-body-renderer > ytd-transcript-segment-renderer
     const panel = querySelectorDeep(document, 'ytd-transcript-body-renderer');
-    if (!panel) return null;
+    if (panel) {
+        const segments = querySelectorAllDeep(panel, 'ytd-transcript-segment-renderer');
+        const lines = [];
+        for (const seg of segments) {
+            const tsEl = querySelectorDeep(seg, '[class*="timestamp"]') || seg.querySelector('div:first-child');
+            const textEl = querySelectorDeep(seg, '[class*="text"]') || seg.querySelector('yt-formatted-string');
+            const ts = tsEl ? tsEl.textContent.trim() : '';
+            const text = textEl ? textEl.textContent.trim() : seg.textContent.trim();
+            if (!text) continue;
+            lines.push(ts ? `[${ts}] ${text}` : text);
+        }
+        if (lines.length) return lines;
+    }
 
-    const segments = querySelectorAllDeep(panel, 'ytd-transcript-segment-renderer');
-    if (!segments.length) return null;
+    // New UI (2025+): transcript-segment-view-model inside the
+    // "PAmodern_transcript_view" engagement panel (ytSpec/Lit stack).
+    const modernPanel = querySelectorDeep(
+        document,
+        'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]'
+    );
+    const modernSegments = querySelectorAllDeep(
+        modernPanel || document,
+        'transcript-segment-view-model'
+    );
+    if (!modernSegments.length) return null;
 
     const lines = [];
-    for (const seg of segments) {
-        const tsEl = querySelectorDeep(seg, '[class*="timestamp"]') || seg.querySelector('div:first-child');
-        const textEl = querySelectorDeep(seg, '[class*="text"]') || seg.querySelector('yt-formatted-string');
-        const ts = tsEl ? tsEl.textContent.trim() : '';
-        const text = textEl ? textEl.textContent.trim() : seg.textContent.trim();
+    for (const seg of modernSegments) {
+        const tsEl = seg.querySelector('.ytwTranscriptSegmentViewModelTimestamp');
+        const textEl = seg.querySelector('span[role="text"]');
+        const text = (textEl?.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text) continue;
+        const ts = tsEl ? tsEl.textContent.trim() : '';
         lines.push(ts ? `[${ts}] ${text}` : text);
     }
-
-    if (lines.length) {
-        ytLog(`Scraped ${lines.length} lines from DOM panel`);
-        return lines;
-    }
-    return null;
+    return lines.length ? lines : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -333,25 +350,31 @@ export function scrapeTranscriptFromDom() {
 const PANEL_POLL_INTERVAL_MS = 400;
 const PANEL_OPEN_TIMEOUT_MS = 15000;
 
+const TRANSCRIPT_PANEL_SELECTORS = [
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]',
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]'
+];
+const SEGMENT_SELECTORS = 'ytd-transcript-segment-renderer, transcript-segment-view-model';
+
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getTranscriptPanel() {
-    return querySelectorDeep(
-        document,
-        'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]'
-    );
+    for (const selector of TRANSCRIPT_PANEL_SELECTORS) {
+        const panel = querySelectorDeep(document, selector);
+        if (panel) return panel;
+    }
+    return null;
 }
 
 export function findTranscriptTriggerButton() {
     const section = querySelectorDeep(document, 'ytd-video-description-transcript-section-renderer');
     if (section) {
-        // Prefer the button whose label says "Show transcript" — the section
-        // can contain other controls before the real trigger.
         const buttons = Array.from(section.querySelectorAll('button'));
-        const labeled = buttons.find(
-            (b) => (b.textContent || '').trim().toLowerCase() === 'show transcript'
+        // Locale-tolerant label match ("Show transcript" / "Mostrar transcripción" / …)
+        const labeled = buttons.find((b) =>
+            /transcrip/i.test(`${b.textContent || ''} ${b.getAttribute('aria-label') || ''}`)
         );
         if (labeled) return labeled;
         if (buttons[0]) return buttons[0];
@@ -359,7 +382,7 @@ export function findTranscriptTriggerButton() {
 
     // Fallback: scan by label for layout variants without the section wrapper.
     for (const candidate of document.querySelectorAll('button')) {
-        if ((candidate.textContent || '').trim().toLowerCase() === 'show transcript') {
+        if (/transcrip/i.test(`${candidate.textContent || ''} ${candidate.getAttribute('aria-label') || ''}`)) {
             return candidate;
         }
     }
@@ -418,7 +441,7 @@ export async function openTranscriptPanelAndScrape() {
         const deadline = Date.now() + PANEL_OPEN_TIMEOUT_MS;
         while (Date.now() < deadline) {
             await sleep(PANEL_POLL_INTERVAL_MS);
-            const segments = querySelectorAllDeep(document, 'ytd-transcript-segment-renderer');
+            const segments = querySelectorAllDeep(document, SEGMENT_SELECTORS);
             if (segments.length > 0) {
                 await sleep(600); // let the full segment list settle
                 const lines = scrapeTranscriptFromDom();

@@ -217,7 +217,10 @@ export class AdvancedMarkdownConverter {
                 return;
             }
             if (yt.isYouTube) {
-                alert('Could not get a transcript for this YouTube video.');
+                alert(
+                    'Could not get the transcript automatically.\n\n' +
+                        'Open the transcript panel yourself (…more in the description → "Show transcript"), then run Save as Markdown again.'
+                );
                 return;
             }
 
