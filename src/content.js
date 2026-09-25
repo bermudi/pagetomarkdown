@@ -217,7 +217,7 @@ export class AdvancedMarkdownConverter {
                 return;
             }
             if (yt.isYouTube) {
-                alert('No transcript available for this YouTube video.');
+                alert('Could not get a transcript for this YouTube video.');
                 return;
             }
 

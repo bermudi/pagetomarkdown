@@ -7,6 +7,12 @@
  *   2. Fetch transcript XML from the fresh track's baseUrl.
  *   3. Fallback: regex-extract captionTracks from inline HTML.
  *   4. Fallback: scrape visible transcript panel from DOM.
+ *   5. Fallback: click "Show transcript" in the page UI ourselves, wait for
+ *      the panel to populate, scrape it, then restore the page state.
+ *      YouTube now returns empty bodies (200) for timedtext URLs that lack
+ *      a proof-of-origin token, and rejects unattested get_transcript calls,
+ *      so the page's own (attested) transcript machinery is often the only
+ *      path that still works.
  */
 
 import browser from 'webextension-polyfill';
@@ -156,6 +162,23 @@ export function pickBestTrack(tracks) {
     return tracks[0];
 }
 
+/**
+ * caption track URLs carry the video id they belong to (…&v=<id>). After
+ * client-side (SPA) navigation the inline ytInitialPlayerResponse still
+ * describes the *first* video loaded in the tab, so HTML/DOM fallbacks can
+ * hand us tracks for the wrong video. Filter those out.
+ */
+export function isTrackForVideo(track, videoId) {
+    if (!track?.baseUrl || !videoId) return false;
+    try {
+        const v = new URL(track.baseUrl).searchParams.get('v');
+        // No v param → can't tell; keep it and let the fetch fail loudly.
+        return v ? v === videoId : true;
+    } catch {
+        return true;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  4.  Timestamp formatting                                          */
 /* ------------------------------------------------------------------ */
@@ -274,7 +297,7 @@ function querySelectorAllDeep(root, selector) {
     return out;
 }
 
-function scrapeTranscriptFromDom() {
+export function scrapeTranscriptFromDom() {
     const panel = querySelectorDeep(document, 'ytd-transcript-body-renderer');
     if (!panel) return null;
 
@@ -296,6 +319,108 @@ function scrapeTranscriptFromDom() {
         return lines;
     }
     return null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  6b. Open the transcript panel ourselves and scrape it            */
+/* ------------------------------------------------------------------ */
+
+const PANEL_POLL_INTERVAL_MS = 400;
+const PANEL_OPEN_TIMEOUT_MS = 15000;
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTranscriptPanel() {
+    return querySelectorDeep(
+        document,
+        'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]'
+    );
+}
+
+export function findTranscriptTriggerButton() {
+    const section = querySelectorDeep(document, 'ytd-video-description-transcript-section-renderer');
+    const button = section?.querySelector('button');
+    if (button) return button;
+
+    // Fallback: scan by label for layout variants without the section wrapper.
+    for (const candidate of document.querySelectorAll('button')) {
+        if ((candidate.textContent || '').trim().toLowerCase() === 'show transcript') {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+/**
+ * Drive the page's own "Show transcript" UI: expand the description if
+ * needed, click the transcript button, wait for segments to render, scrape
+ * them, then restore the description/panel state we found. This uses the
+ * page's attested transcript machinery, so it keeps working when raw
+ * timedtext/get_transcript calls are rejected.
+ */
+export async function openTranscriptPanelAndScrape() {
+    ytLog('Trying to open the transcript panel in the page UI');
+
+    const descriptionExpander = document.querySelector('#description-inline-expander');
+    const wasDescriptionExpanded = descriptionExpander?.getAttribute('expanded') === 'true';
+    const wasPanelVisible =
+        getTranscriptPanel()?.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED';
+
+    const restoreUiState = async () => {
+        // The trigger button is a toggle; only close what we opened.
+        if (!wasPanelVisible) {
+            const panel = getTranscriptPanel();
+            if (panel?.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
+                findTranscriptTriggerButton()?.click();
+                await sleep(400);
+            }
+        }
+        if (!wasDescriptionExpanded) {
+            document
+                .querySelector('#description-inline-expander #collapse')
+                ?.click();
+        }
+    };
+
+    try {
+        if (!wasDescriptionExpanded) {
+            const expand = document.querySelector('#description-inline-expander #expand');
+            if (expand) {
+                ytLog('Expanding the video description to reach the transcript button');
+                expand.click();
+                await sleep(1000);
+            }
+        }
+
+        const trigger = findTranscriptTriggerButton();
+        if (!trigger) {
+            ytLog('No "Show transcript" button found in the page');
+            return null;
+        }
+
+        if (!wasPanelVisible) trigger.click();
+
+        const deadline = Date.now() + PANEL_OPEN_TIMEOUT_MS;
+        while (Date.now() < deadline) {
+            await sleep(PANEL_POLL_INTERVAL_MS);
+            const segments = querySelectorAllDeep(document, 'ytd-transcript-segment-renderer');
+            if (segments.length > 0) {
+                await sleep(600); // let the full segment list settle
+                const lines = scrapeTranscriptFromDom();
+                if (lines?.length) {
+                    ytLog(`Panel scrape produced ${lines.length} lines`);
+                    return lines;
+                }
+            }
+        }
+
+        ytLog('Transcript panel did not populate in time');
+        return null;
+    } finally {
+        await restoreUiState();
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -363,7 +488,8 @@ export async function tryExtractYouTubeTranscript() {
     /* -------------------------------------------------------------- */
     if (!captionTracks || captionTracks.length === 0) {
         try {
-            captionTracks = extractCaptionTracksFromHtml(getHtml());
+            const tracks = extractCaptionTracksFromHtml(getHtml());
+            captionTracks = tracks ? tracks.filter((t) => isTrackForVideo(t, videoId)) : null;
             if (captionTracks) {
                 ytLog('captionTracks from HTML regex:', captionTracks.length);
             }
@@ -379,7 +505,9 @@ export async function tryExtractYouTubeTranscript() {
         playerResponse = extractYtInitialPlayerResponseFromDom();
         if (playerResponse) {
             ytLog('ytInitialPlayerResponse parsed from DOM');
-            captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+            const tracks =
+                playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+            captionTracks = tracks ? tracks.filter((t) => isTrackForVideo(t, videoId)) : null;
             if (captionTracks) {
                 ytLog('captionTracks from DOM parse:', captionTracks.length);
             }
@@ -420,7 +548,19 @@ export async function tryExtractYouTubeTranscript() {
     /*  5. LAST RESORT: Scrape visible transcript panel               */
     /* -------------------------------------------------------------- */
     if (lines.length === 0) {
-        lines = scrapeTranscriptFromDom();
+        lines = scrapeTranscriptFromDom() || [];
+    }
+
+    /* -------------------------------------------------------------- */
+    /*  6. LAST RESORT: Open the transcript panel ourselves and       */
+    /*     scrape it (survives timedtext/get_transcript blocking)     */
+    /* -------------------------------------------------------------- */
+    if (lines.length === 0) {
+        try {
+            lines = (await openTranscriptPanelAndScrape()) || [];
+        } catch (err) {
+            console.warn('[PageToMD] Panel-driven transcript scrape failed:', err);
+        }
     }
 
     if (!lines || lines.length === 0) {
@@ -429,7 +569,7 @@ export async function tryExtractYouTubeTranscript() {
     }
 
     /* -------------------------------------------------------------- */
-    /*  6. Build markdown                                               */
+    /*  7. Build markdown                                               */
     /* -------------------------------------------------------------- */
     const metadata = playerResponse
         ? extractYouTubeMetadata(playerResponse)
