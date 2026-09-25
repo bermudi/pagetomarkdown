@@ -23,6 +23,11 @@ let ytDebug = false;
 function ytLog(...args) {
     if (ytDebug) console.log('[PageToMD]', ...args);
 }
+// Pipeline checkpoints that should always be visible when diagnosing
+// "no transcript" reports — not gated behind the debug option.
+function ytTrace(...args) {
+    console.info('[PageToMD:youtube]', ...args);
+}
 async function updateYtDebug() {
     try {
         const result = await browser.storage.local.get('debugLogging');
@@ -341,8 +346,16 @@ function getTranscriptPanel() {
 
 export function findTranscriptTriggerButton() {
     const section = querySelectorDeep(document, 'ytd-video-description-transcript-section-renderer');
-    const button = section?.querySelector('button');
-    if (button) return button;
+    if (section) {
+        // Prefer the button whose label says "Show transcript" — the section
+        // can contain other controls before the real trigger.
+        const buttons = Array.from(section.querySelectorAll('button'));
+        const labeled = buttons.find(
+            (b) => (b.textContent || '').trim().toLowerCase() === 'show transcript'
+        );
+        if (labeled) return labeled;
+        if (buttons[0]) return buttons[0];
+    }
 
     // Fallback: scan by label for layout variants without the section wrapper.
     for (const candidate of document.querySelectorAll('button')) {
@@ -396,7 +409,7 @@ export async function openTranscriptPanelAndScrape() {
 
         const trigger = findTranscriptTriggerButton();
         if (!trigger) {
-            ytLog('No "Show transcript" button found in the page');
+            ytTrace('no "Show transcript" button found in the page — panel path unavailable');
             return null;
         }
 
@@ -410,13 +423,16 @@ export async function openTranscriptPanelAndScrape() {
                 await sleep(600); // let the full segment list settle
                 const lines = scrapeTranscriptFromDom();
                 if (lines?.length) {
-                    ytLog(`Panel scrape produced ${lines.length} lines`);
+                    ytTrace(`panel scrape produced ${lines.length} lines`);
                     return lines;
                 }
             }
         }
 
-        ytLog('Transcript panel did not populate in time');
+        ytTrace(
+            `transcript panel did not populate within ${PANEL_OPEN_TIMEOUT_MS / 1000}s ` +
+                `(final visibility: ${getTranscriptPanel()?.getAttribute('visibility') ?? 'none'})`
+        );
         return null;
     } finally {
         await restoreUiState();
@@ -479,7 +495,7 @@ export async function tryExtractYouTubeTranscript() {
             captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
             ytLog('captionTracks from ANDROID player API:', captionTracks?.length ?? 'none');
         } catch (err) {
-            console.warn('[PageToMD] ANDROID player API failed:', err);
+            ytTrace('ANDROID player API failed:', err?.message ?? err);
         }
     }
 
@@ -494,7 +510,7 @@ export async function tryExtractYouTubeTranscript() {
                 ytLog('captionTracks from HTML regex:', captionTracks.length);
             }
         } catch (err) {
-            console.warn('[PageToMD] HTML regex extract failed:', err);
+            ytTrace('HTML regex extract failed:', err?.message ?? err);
         }
     }
 
@@ -529,7 +545,7 @@ export async function tryExtractYouTubeTranscript() {
                 lines = await fetchTranscriptXml(track.baseUrl);
                 ytLog('XML fetch lines:', lines.length);
             } catch (err) {
-                console.warn('[PageToMD] XML fetch failed:', err);
+                ytTrace(`timedtext ${track.languageCode} XML failed:`, err?.message ?? err);
             }
 
             // Try JSON3
@@ -538,10 +554,14 @@ export async function tryExtractYouTubeTranscript() {
                     lines = await fetchTranscriptJson3(track.baseUrl);
                     ytLog('JSON3 fetch lines:', lines.length);
                 } catch (err) {
-                    console.warn('[PageToMD] JSON3 fetch failed:', err);
+                    ytTrace('timedtext json3 failed:', err?.message ?? err);
                 }
             }
+        } else {
+            ytTrace('caption track had no baseUrl');
         }
+    } else {
+        ytTrace('no caption tracks found via player API or inline HTML');
     }
 
     /* -------------------------------------------------------------- */
@@ -559,12 +579,12 @@ export async function tryExtractYouTubeTranscript() {
         try {
             lines = (await openTranscriptPanelAndScrape()) || [];
         } catch (err) {
-            console.warn('[PageToMD] Panel-driven transcript scrape failed:', err);
+            ytTrace('Panel-driven transcript scrape failed:', err?.message ?? err);
         }
     }
 
     if (!lines || lines.length === 0) {
-        ytLog('No transcript available for this YouTube video');
+        ytTrace('all transcript extraction paths exhausted — giving up');
         return { found: false, isYouTube: true, markdown: '', metadata: {} };
     }
 
