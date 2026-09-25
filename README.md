@@ -49,7 +49,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 2. `src/background.js` (`MarkdownDownloader`) reads `defaultStripLinks` from `browser.storage.local`, checks modifiers, and sends `trigger_conversion` with `{ stripLinks, stripImages }` to the active tab.
 3. `src/content.js` (`AdvancedMarkdownConverter.processPage`):
    - Reads `debugLogging` from storage to gate diagnostics (`this.log()`).
-   - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing and DOM scraping.
+   - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing, and finally clicks "Show transcript" in the page UI itself and scrapes the rendered panel (YouTube returns empty bodies for caption URLs that lack a proof-of-origin token, so the page's own attested transcript machinery is often the only working path).
    - Else tries Poe conversation transcript (`poe.com` chat messages) and Reddit thread extractor (`old.reddit.com` via `#siteTable .thing.link`; modern `shreddit` UI falls through).
    - Else clones `document.body`, runs `preserveActiveTabs`, prunes invisible chrome (`pruneNoiseElements`), passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks or returns a near-empty selection.
    - Collects metadata from `defuddle` result + meta tags.
