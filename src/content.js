@@ -2,6 +2,7 @@ import browser from 'webextension-polyfill';
 import Defuddle from 'defuddle';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
+import { extractClaudeConversation } from './lib/claudeExtractor';
 import { extractRedditThread } from './lib/redditExtractor';
 import { preserveActiveTabs } from './lib/tabState';
 import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
@@ -238,6 +239,15 @@ export class AdvancedMarkdownConverter {
 
 
     extractMainContent() {
+        const claudeConversation = extractClaudeConversation(document);
+        if (claudeConversation?.article) {
+            this.log('Using Claude conversation extractor');
+            this.metadataOverrides = claudeConversation.metadataOverrides ?? null;
+            this.defuddleResult = null;
+            this.defuddleHtml = claudeConversation.article.outerHTML || '';
+            return claudeConversation.article;
+        }
+
         const poeConversation = this.extractPoeConversationTranscript();
         if (poeConversation) {
             this.log('Using Poe conversation extractor');

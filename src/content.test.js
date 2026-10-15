@@ -298,5 +298,55 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
         }
       });
     });
+
+    describe('extractMainContent integration (claude.ai conversation)', () => {
+      it('extracts the full conversation, not just the first message', () => {
+        const originalBody = document.body.innerHTML;
+        const originalTitle = document.title;
+        const originalUrl = window.location.href;
+        try {
+          window.happyDOM.setURL(
+            'https://claude.ai/chat/3f6ffb5d-b4db-4c83-9976-d17f65be31ef'
+          );
+          document.title = 'Prompt structure for better AI requests - Claude';
+          document.body.innerHTML = `
+            <aside>Sidebar noise: Chats and tasks</aside>
+            <div data-testid="transcript-list">
+              <div data-testid="transcript-row" data-perf-row="human">
+                <div role="article" aria-label="Message 1 of 2">
+                  <h2 data-find-omitted="" class="sr-only">You said: what do you think</h2>
+                  <div data-cds="UserMessage"><div data-testid="user-message"><p>what do you think of my prompt</p><pre><code>Help me turn the following prompt into a good prompt.\n\nPrompt:</code></pre></div></div>
+                  <div data-cds="MessageActions" role="toolbar"><button>Show more</button></div>
+                </div>
+              </div>
+              <div data-testid="transcript-row" data-perf-row="assistant">
+                <div role="article" aria-label="Message 2 of 2">
+                  <h2 data-find-omitted="" class="sr-only">Claude responded: Honestly, it's good.</h2>
+                  <div data-cds="TurnStatus"><p>Thought for 12s</p></div>
+                  <div data-cds="AssistantMessage" data-testid="assistant-message"><p>Honestly, it's good. The best parts are the specifics.</p><pre><code>Rewrite the prompt inside &lt;prompt&gt;.</code></pre></div>
+                  <div data-cds="MessageActions" role="toolbar"><button>Copy</button></div>
+                </div>
+              </div>
+            </div>
+            <div>Write a message…</div>
+          `;
+          const result = converter.extractMainContent();
+          const text = result.textContent || '';
+          expect(text).toContain('what do you think of my prompt');
+          expect(text).toContain('Prompt:');
+          expect(text).toContain("Honestly, it's good");
+          expect(text).toContain('Rewrite the prompt inside <prompt>');
+          expect(text).not.toContain('Show more');
+          expect(text).not.toContain('Thought for 12s');
+          expect(text).not.toContain('Sidebar noise');
+          expect(text).not.toContain('Write a message');
+          expect(result.querySelectorAll('section[data-speaker-role]').length).toBe(2);
+        } finally {
+          window.happyDOM.setURL(originalUrl);
+          document.body.innerHTML = originalBody;
+          document.title = originalTitle;
+        }
+      });
+    });
   });
 });
