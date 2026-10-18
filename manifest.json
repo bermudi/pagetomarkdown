@@ -5,6 +5,7 @@
   "description": "Saves the current page as markdown",
   "permissions": [
     "activeTab",
+    "contextMenus",
     "downloads",
     "storage"
   ],

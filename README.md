@@ -13,10 +13,10 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 ## Features
 
 - **One‑click capture**
-  Click the toolbar button to extract and save the current page as a `.md` file. Hold `Shift` to toggle the default "keep links/images" vs "plain text" mode.
+  Click the toolbar button to extract and save the current page as a `.md` file — or right‑click anywhere on the page and choose **Save as Markdown** from the context menu. Hold `Shift` to toggle the default "keep links/images" vs "plain text" mode.
 
 - **Readable content extraction**
-  Uses [defuddle](https://github.com/kepano/defuddle) to pull out the main article content and avoid chrome, sidebars, ads, and unrelated UI where possible. Specialized extractors run first for YouTube transcripts, Claude.ai conversations, Poe conversations, and old Reddit threads. Falls back to the page body clone if defuddle can't parse or returns an implausibly thin selection (e.g. SPA chat transcripts). The body clone is scrubbed of invisible chrome first — `display:none`/`visibility:hidden` inline styles, `[hidden]`, `<template>`, skip-to-content links, and `[aria-hidden="true"]` subtrees (math renderers and content-dominating subtrees exempted) — so screen-reader live regions and skip links never reach the markdown. Hidden tab panels are pruned via `preserveActiveTabs` so only the active tab's code survives.
+  Uses [defuddle](https://github.com/kepano/defuddle) to pull out the main article content and avoid chrome, sidebars, ads, and unrelated UI where possible. Specialized extractors run first for YouTube transcripts, Claude.ai conversations, Poe conversations, and old Reddit threads. Falls back to the page body clone if defuddle can't parse or returns an implausibly thin selection (e.g. SPA chat transcripts). The body clone is scrubbed of invisible chrome first — `display:none`/`visibility:hidden` inline styles, `[hidden]`, `<template>`, skip-to-content links, `[aria-hidden="true"]` subtrees (math renderers and content-dominating subtrees exempted), tracking-pixel images, share widgets (share-endpoint links plus common container classes), and containers left empty by their removal — so screen-reader live regions, skip links, icons, and analytics beacons never reach the markdown. Hidden tab panels are pruned via `preserveActiveTabs` so only the active tab's code survives.
 
 - **High‑quality Markdown**
   Uses `turndown` + GFM plugin with custom rules for:
@@ -45,7 +45,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 
 ## How it works
 
-1. You click the **Page to Markdown** toolbar button (or `Shift+click` to toggle link stripping).
+1. You click the **Page to Markdown** toolbar button or choose **Save as Markdown** from the page's right‑click menu (or `Shift+click` to toggle link stripping).
 2. `src/background.js` (`MarkdownDownloader`) reads `defaultStripLinks` from `browser.storage.local`, checks modifiers, and sends `trigger_conversion` with `{ stripLinks, stripImages }` to the active tab.
 3. `src/content.js` (`AdvancedMarkdownConverter.processPage`):
    - Reads `debugLogging` from storage to gate diagnostics (`this.log()`).
@@ -87,6 +87,9 @@ The extension requests these WebExtension permissions:
 
 - `activeTab`
   Needed to run the content script and read the DOM of the currently active tab when you click the icon.
+
+- `contextMenus`
+  Adds the right‑click **Save as Markdown** menu entry on pages.
 
 - `downloads`
   Required to create and download the resulting Markdown file.

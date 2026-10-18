@@ -16,6 +16,24 @@ export class MarkdownDownloader {
             onClicked.addListener(this.handleIconClick.bind(this));
         }
 
+        const menus = nativeBrowser?.contextMenus ?? browser.contextMenus;
+        if (menus?.create && menus?.onClicked) {
+            // Non-persistent MV2 background re-runs on every wake while the
+            // menu item persists, so a duplicate-id failure is harmless.
+            Promise.resolve(
+                menus.create({
+                    id: 'save-page-as-markdown',
+                    title: 'Save as Markdown',
+                    contexts: ['page']
+                })
+            ).catch(() => {});
+            menus.onClicked.addListener((info, tab) => {
+                if (info?.menuItemId === 'save-page-as-markdown' && tab?.id != null) {
+                    void this.handleIconClick(tab, info);
+                }
+            });
+        }
+
         browser.runtime.onMessage.addListener(this.handleMessage.bind(this));
     }
 
