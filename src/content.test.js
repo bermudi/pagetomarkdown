@@ -222,6 +222,75 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       });
     });
 
+    describe('tracker pixels and share widgets (issue #24)', () => {
+      it('removes analytics/tracking pixel images', () => {
+        const body = fragment(`
+          <p>real article text</p>
+          <img src="//analytics.supplyframe.com/trackingservlet/impression?action=pageImpression" id="hdTrack" class="trackImg">
+          <img src="https://stats.wp.com/g.gif?x=1" alt="">
+          <img src="https://example.com/pixel.gif" width="1" height="1">
+          <img src="https://example.com/beacon" style="width:1px;height:1px">
+          <img src="https://example.com/real-photo.jpg" alt="Actual content">
+        `);
+        const counts = converter.pruneNoiseElements(body);
+        expect(counts.trackers).toBe(4);
+        expect(body.innerHTML).toContain('real-photo.jpg');
+        expect(body.innerHTML).not.toContain('trackingservlet');
+        expect(body.innerHTML).not.toContain('stats.wp.com');
+        expect(body.innerHTML).not.toContain('pixel.gif');
+      });
+
+      it('removes share widgets, share-endpoint links, and emptied wrappers', () => {
+        const body = fragment(`
+          <ul class="sharing">
+            <li><a href="https://www.facebook.com/sharer/sharer.php?u=x"><i><img src="/img/share_face.png"></i></a></li>
+            <li><a href="https://twitter.com/intent/tweet?text=t"><i><img src="/img/share_twitter.png"></i></a></li>
+            <li><a href="mailto:?subject=t&amp;body=u"><img src="/img/share_mail.png"></a></li>
+          </ul>
+          <div class="share-dialog-content">
+            <form id="share-menu"><label>Title:</label><input value="x"><button>Copy</button></form>
+          </div>
+          <p>Keep this <a href="https://example.com/real-link">real link</a>.</p>
+          <ul><li><a href="https://news.ycombinator.com/submitlink?u=x&t=t">Share on HN</a></li></ul>
+        `);
+        const counts = converter.pruneNoiseElements(body);
+        // ul.sharing, .share-dialog-content and #share-menu go as whole
+        // widgets first; only the bare <ul><li><a> HN item remains for the
+        // link pass.
+        expect(counts.shareLinks).toBe(1);
+        expect(counts.shareWidgets).toBe(3);
+        expect(body.querySelector('a')).not.toBeNull();
+        expect(body.innerHTML).toContain('real-link');
+        expect(body.innerHTML).not.toContain('sharer.php');
+        expect(body.innerHTML).not.toContain('intent/tweet');
+        expect(body.innerHTML).not.toContain('share-menu');
+      });
+
+      it('leaves no stray bullets or empty links in markdown output', () => {
+        const body = fragment(`
+          <p>article body</p>
+          <ul class="sharing">
+            <li><a href="https://www.facebook.com/sharer/sharer.php?u=x"><img src="/i/f.png"></a></li>
+            <li><a href="https://reddit.com/submit?url=u"><img src="/i/r.png"></a></li>
+          </ul>
+        `);
+        converter.pruneNoiseElements(body);
+        const md = converter.turndown.turndown(body.innerHTML);
+        expect(md).toContain('article body');
+        expect(md).not.toMatch(/sharer|reddit\.com\/submit/);
+        expect(md).not.toMatch(/^\s*-\s*$/m);
+        expect(md).not.toMatch(/(?<!!)\[\]\(/);
+      });
+
+      it('keeps a mailto link with a real recipient', () => {
+        const body = fragment(`
+          <p>Contact <a href="mailto:author@example.com">the author</a>.</p>
+        `);
+        converter.pruneNoiseElements(body);
+        expect(body.innerHTML).toContain('mailto:author@example.com');
+      });
+    });
+
     describe('isSubstantiveExtraction', () => {
       it('accepts a substantive extraction', () => {
         const parsed = fragment(`<p>${'word '.repeat(40)}</p>`);
