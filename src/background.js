@@ -19,17 +19,25 @@ export class MarkdownDownloader {
         const menus = nativeBrowser?.contextMenus ?? browser.contextMenus;
         if (menus?.create && menus?.onClicked) {
             // Non-persistent MV2 background re-runs on every wake while the
-            // menu item persists, so a duplicate-id failure is harmless.
-            Promise.resolve(
-                menus.create({
-                    id: 'save-page-as-markdown',
-                    title: 'Save as Markdown',
-                    contexts: ['all']
-                })
-            ).catch(() => {});
+            // menu items persist, so duplicate-id failures are harmless.
+            const create = (props) =>
+                Promise.resolve(menus.create(props)).catch(() => {});
+            void create({
+                id: 'save-page-as-markdown',
+                title: 'Save as Markdown',
+                contexts: ['all']
+            });
+            void create({
+                id: 'save-page-as-markdown-plain',
+                title: 'Save as Markdown (plain text)',
+                contexts: ['all']
+            });
             menus.onClicked.addListener((info, tab) => {
-                if (info?.menuItemId === 'save-page-as-markdown' && tab?.id != null) {
-                    void this.handleIconClick(tab, info);
+                if (tab?.id == null) return;
+                if (info?.menuItemId === 'save-page-as-markdown') {
+                    void this.sendConversion(tab, { stripLinks: false, stripImages: false });
+                } else if (info?.menuItemId === 'save-page-as-markdown-plain') {
+                    void this.sendConversion(tab, { stripLinks: true, stripImages: true });
                 }
             });
         }
@@ -52,13 +60,14 @@ export class MarkdownDownloader {
         const defaultStripLinks = await this.getDefaultStripLinks();
         const stripLinks = shiftHeld ? !defaultStripLinks : defaultStripLinks;
 
+        await this.sendConversion(tab, { stripLinks, stripImages: stripLinks });
+    }
+
+    async sendConversion(tab, { stripLinks, stripImages }) {
         await browser.tabs
             .sendMessage(tab.id, {
                 action: 'trigger_conversion',
-                options: {
-                    stripLinks,
-                    stripImages: stripLinks
-                }
+                options: { stripLinks, stripImages }
             })
             .catch((err) => {
                 console.error('Could not send message to content script. Try reloading the page.', err);
