@@ -66,5 +66,12 @@ The landscape, after a full day of archaeology:
 
 - Firefox temp add-ons (about:debugging) do not inject content scripts into
   tabs opened before loading — F5 the tab after (re)loading the add-on.
+- Smoke-test loop: `pnpm dlx web-ext run --source-dir . --firefox
+  /usr/bin/firefox-developer-edition --no-input --start-url <url>` —
+  throws up Dev Edition on a throwaway profile with the add-on from
+  `dist/` and auto-reloads on file changes. Run `pnpm build` first. The
+  loaded add-on reports the in-repo manifest version (4.3.x — only
+  `build_zip.sh` syncs it from package.json), so it *looks* identical to
+  the AMO copy; "Temporary Extension" label is the tell.
 - `pnpm lint && pnpm test && pnpm build` must pass before commits;
   `eslint.config.js` lists browser globals explicitly (add new ones there).
