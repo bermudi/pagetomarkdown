@@ -29,7 +29,7 @@ export class MarkdownDownloader {
             });
             void create({
                 id: 'save-page-as-markdown-plain',
-                title: 'Save as Markdown (plain text)',
+                title: 'Save as Markdown (no links)',
                 contexts: ['all']
             });
             menus.onClicked.addListener((info, tab) => {
