@@ -24,7 +24,7 @@ export class MarkdownDownloader {
                 menus.create({
                     id: 'save-page-as-markdown',
                     title: 'Save as Markdown',
-                    contexts: ['page']
+                    contexts: ['all']
                 })
             ).catch(() => {});
             menus.onClicked.addListener((info, tab) => {
