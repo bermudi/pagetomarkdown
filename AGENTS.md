@@ -62,6 +62,29 @@ The landscape, after a full day of archaeology:
 5. Vision models misidentify Chrome vs Firefox screenshots — verify browser
    identity from UI details before drawing conclusions from them.
 
+## Mermaid / rendered-diagram salvage (verified 2026-10-21, DeepWiki)
+
+- DeepWiki renders ` ```mermaid ` code blocks inside `<pre>` wrappers; mermaid.js
+  replaces the code text with the rendered `<svg id="mermaid-…">`.
+- **defuddle strips `id`, `class`, and `aria-*` attributes** (not in its
+  `ALLOWED_ATTRIBUTES`) and dissolves the svg into raw text → the `pre` keeps
+  `<code>#mermaid-x{…css…}GluedLabelText</code>`. The old `svg[id^="mermaid-"]`
+  detector sees nothing; the fenced-`pre` rule then emits the CSS blob.
+- The original diagram source survives in `document.body.innerHTML` inside
+  Next.js RSC `<script>` payload strings (`self.__next_f.push`, `\n`-escaped —
+  `extractMermaidBlocksFromRawHtml` already decodes it). defuddle output never
+  contains it.
+- Matching: score each ` ```mermaid ` candidate by fraction of its identifier
+  tokens (labels/paths) present in the remnant text. Verified margins: 0.86 /
+  0.58 / 1.0 / 1.0 correct vs ≤0.5 runners-up on the live page.
+- happy-dom **loses `<script>` text on `innerHTML` read-back** — tests must
+  stub `document.body.innerHTML` to exercise the page-payload path.
+- Firefox+Marionette e2e: `--marionette --profile <existing-dir>
+  --new-instance --no-remote`, `Addons(client).install(repo, temp=True)`, then
+  chrome context needs `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` *at launch*; click
+  `_<id>_-BAP` in `#unified-extensions-view` after opening
+  `unified-extensions-button`. Works headless (`-headless`) too.
+
 ## Misc
 
 - Firefox temp add-ons (about:debugging) do not inject content scripts into

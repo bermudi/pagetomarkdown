@@ -44,11 +44,17 @@ Issue #16 asked to pick a strategy:
 - **Option A** — fix entirely in-extension, delete the script.
 - **Option B** — keep the script as a documented post-processor.
 
+Update 2026-10-21: the extension now handles the mermaid case in-extension —
+rendered diagrams dissolved to `pre>code` CSS blobs are detected and the real
+```mermaid source is recovered from the page's RSC/script payload (verified
+end-to-end on a live DeepWiki page). The script remains useful for fixing
+already-downloaded files and the non-mermaid artifacts.
+
 Option B is kept for now because:
 
-- The extension pipeline hasn't been verified end-to-end against real DeepWiki HTML fixtures.
-- The fixes are post-download regex patches on markdown text; they would require new turndown
-  rules *and* markdown-level passes inside the extension, which is a larger change.
+- The fixes for compressed tables and trailing broken images are post-download
+  regex patches on markdown text; they would require new turndown rules *and*
+  markdown-level passes inside the extension, which is a larger change.
 - The script is idempotent and cheap; keeping it as `tools/` with tests is reversible. If
   future work proves in-extension handling covers all cases, we can delete it then.
 

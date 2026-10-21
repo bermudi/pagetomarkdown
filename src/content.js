@@ -50,6 +50,15 @@ const SHARE_WIDGET_SELECTOR = [
     '[class*="shareaholic"]'
 ].join(',');
 
+// Mermaid syntax keywords — excluded when tokenizing diagram sources for
+// label matching.
+const MERMAID_KEYWORDS = new Set([
+    'graph', 'subgraph', 'end', 'flowchart', 'statediagram', 'sequencediagram',
+    'classdiagram', 'erdiagram', 'statediagramv', 'gantt', 'mindmap', 'timeline',
+    'journey', 'gitgraph', 'classdef', 'style', 'click', 'linkstyle', 'direction',
+    'default', 'participant', 'actor', 'note', 'loop', 'alt', 'else', 'opt'
+]);
+
 // Elements that can be dropped once share links/trackers leave them empty.
 // Anything with media descendants or real text is kept.
 const EMPTIABLE_SELECTOR = 'li, ul, ol, i, span, p, div, form, section, aside';
@@ -787,6 +796,15 @@ export class AdvancedMarkdownConverter {
         this.pruneNoiseElements(body);
 
         const rawMermaidSources = this.extractMermaidBlocksFromRawHtml(html);
+        // Next.js/SPA pages (e.g. DeepWiki) ship the original markdown inside
+        // RSC <script> payloads that defuddle strips; the live body HTML keeps
+        // them, so scan it as an extra source pool.
+        const pageMermaidSources =
+            typeof document !== 'undefined' && document.body
+                ? this.extractMermaidBlocksFromRawHtml(document.body.innerHTML || '')
+                : [];
+        const mermaidSources = [...new Set([...rawMermaidSources, ...pageMermaidSources])];
+        const consumedMermaidSources = new Set();
         let rawMermaidUsedCount = 0;
         let rawMermaidIndex = 0;
 
@@ -811,8 +829,16 @@ export class AdvancedMarkdownConverter {
 
             let source = this.extractMermaidSource(svg);
 
-            if (!source && rawMermaidIndex < rawMermaidSources.length) {
-                const pick = this.pickRawMermaidSourceForSvg(svg, rawMermaidSources, rawMermaidIndex);
+            if (!source) {
+                source = this.matchMermaidSourceByText(svg.textContent || '', mermaidSources, consumedMermaidSources);
+                if (source) {
+                    consumedMermaidSources.add(source);
+                    rawMermaidUsedCount += 1;
+                }
+            }
+
+            if (!source && rawMermaidIndex < mermaidSources.length) {
+                const pick = this.pickRawMermaidSourceForSvg(svg, mermaidSources, rawMermaidIndex);
                 source = pick.source;
                 rawMermaidIndex = pick.nextIndex;
                 if (pick.used) {
@@ -836,14 +862,7 @@ export class AdvancedMarkdownConverter {
                 continue;
             }
 
-            const pre = doc.createElement('pre');
-            pre.setAttribute('data-pagetomd-generated', 'mermaid');
-            const code = doc.createElement('code');
-            code.setAttribute('data-lang', 'mermaid');
-            code.setAttribute('class', 'language-mermaid');
-            code.textContent = source;
-            pre.appendChild(code);
-            svg.replaceWith(pre);
+            svg.replaceWith(this.buildMermaidPre(doc, source));
             mermaidReplacedCount += 1;
         }
 
@@ -853,7 +872,7 @@ export class AdvancedMarkdownConverter {
                 mermaidReplacedCount,
                 mermaidPlaceholderCount,
                 mermaidEmbeddedSvgCount,
-                rawMermaidSourceCount: rawMermaidSources.length,
+                rawMermaidSourceCount: mermaidSources.length,
                 rawMermaidUsedCount
             });
         }
@@ -864,14 +883,41 @@ export class AdvancedMarkdownConverter {
             mermaidReplacedCount,
             mermaidPlaceholderCount,
             mermaidEmbeddedSvgCount,
-            rawMermaidSourceCount: rawMermaidSources.length,
+            rawMermaidSourceCount: mermaidSources.length,
             rawMermaidUsedCount
         });
 
         const pres = Array.from(body.querySelectorAll('pre'));
         this.log('normalizeContentHtml: found PRE elements in source HTML', { count: pres.length });
 
+        let mermaidGarbagePreCount = 0;
         for (const pre of pres) {
+            if (!body.contains(pre)) continue;
+
+            const preText = (pre.textContent || '').trim();
+            if (preText && this.isMermaidGarbageText(preText)) {
+                mermaidGarbagePreCount += 1;
+                const source = this.matchMermaidSourceByText(preText, mermaidSources, consumedMermaidSources);
+                if (source) {
+                    consumedMermaidSources.add(source);
+                    rawMermaidUsedCount += 1;
+                    pre.replaceWith(this.buildMermaidPre(doc, source));
+                } else {
+                    const placeholder = doc.createElement('blockquote');
+                    const p = doc.createElement('p');
+                    const strong = doc.createElement('strong');
+                    strong.textContent = 'Diagram:';
+                    p.appendChild(strong);
+                    const labels = this.extractMermaidRenderedLabels(preText);
+                    p.appendChild(
+                        doc.createTextNode(labels ? ` ${labels}` : ' mermaid diagram (rendered source unavailable)')
+                    );
+                    placeholder.appendChild(p);
+                    pre.replaceWith(placeholder);
+                }
+                continue;
+            }
+
             const language = this.detectLanguageForPre(pre);
 
             const existingCodeElement = pre.querySelector('code');
@@ -897,6 +943,12 @@ export class AdvancedMarkdownConverter {
             pre.appendChild(code);
         }
 
+        if (mermaidGarbagePreCount > 0) {
+            this.log('normalizeContentHtml: mermaid-rendered pre blocks', {
+                mermaidGarbagePreCount
+            });
+        }
+
         const result = body.innerHTML;
         const firstPreMatch = result.match(/<pre[^>]*>[\s\S]{0,300}/);
         this.log('normalizeContentHtml: first <pre> snippet after normalization', {
@@ -904,6 +956,82 @@ export class AdvancedMarkdownConverter {
         });
 
         return result;
+    }
+
+    buildMermaidPre(doc, source) {
+        const pre = doc.createElement('pre');
+        pre.setAttribute('data-pagetomd-generated', 'mermaid');
+        const code = doc.createElement('code');
+        code.setAttribute('data-lang', 'mermaid');
+        code.setAttribute('class', 'language-mermaid');
+        code.textContent = source;
+        pre.appendChild(code);
+        return pre;
+    }
+
+    // Text left behind when a renderer replaces a ```mermaid code block with
+    // the rendered SVG and an extractor then flattens the SVG to text: the
+    // scoped <style> rules followed by concatenated node labels.
+    isMermaidGarbageText(text) {
+        if (!text) return false;
+        if (/^#\S*mermaid\S*\s*\{/i.test(text)) return true;
+        if (text.includes('edge-animation-frame')) return true;
+        return (
+            text.includes('#mermaid-') &&
+            (text.includes('@keyframes') || text.includes('stroke-dasharray'))
+        );
+    }
+
+    mermaidCandidateTokens(source) {
+        const tokens = new Set();
+        const re = /[A-Za-z][A-Za-z0-9_]*(?:[./][A-Za-z0-9_./-]+)*/g;
+        let m;
+        while ((m = re.exec(source))) {
+            const tok = m[0];
+            if (tok.length < 3) continue;
+            if (MERMAID_KEYWORDS.has(tok.toLowerCase())) continue;
+            tokens.add(tok);
+        }
+        return tokens;
+    }
+
+    // Score each candidate by the fraction of its identifier tokens visible in
+    // the rendered remnant (svg text or mangled code text). Node labels and
+    // paths survive rendering, so the true source scores far above lookalikes.
+    matchMermaidSourceByText(haystack, candidates, consumed) {
+        if (!haystack || !candidates?.length) return '';
+        let best = '';
+        let bestScore = 0;
+        let bestHits = 0;
+        for (const cand of candidates) {
+            if (!cand || consumed?.has(cand)) continue;
+            const toks = this.mermaidCandidateTokens(cand);
+            if (!toks.size) continue;
+            let hits = 0;
+            for (const t of toks) {
+                if (haystack.includes(t)) hits += 1;
+            }
+            const score = hits / toks.size;
+            if (score > bestScore || (score === bestScore && hits > bestHits)) {
+                best = cand;
+                bestScore = score;
+                bestHits = hits;
+            }
+        }
+        if (best && bestScore >= 0.5 && bestHits >= 2) return best;
+        return '';
+    }
+
+    // The label tail of a rendered-mermaid text blob: everything after the
+    // last CSS '}' is the concatenated node/edge labels.
+    extractMermaidRenderedLabels(text) {
+        if (!text) return '';
+        const tail = text.slice(text.lastIndexOf('}') + 1);
+        const spaced = tail
+            .replace(/([a-z0-9)])([A-Z])/g, '$1 $2')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return spaced;
     }
 
     pickRawMermaidSourceForSvg(svgElement, rawMermaidSources, startIndex) {

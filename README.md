@@ -21,7 +21,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 - **High‑quality Markdown**
   Uses `turndown` + GFM plugin with custom rules for:
   - Fenced code blocks, including language hints from `language-*`, `data-lang`, `data-language`, and `lang-*`
-  - Mermaid diagrams: `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI
+  - Mermaid diagrams: `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI. Rendered diagrams dissolved to CSS+label text inside `<pre>` wrappers (DeepWiki-style) are recovered by matching ` ```mermaid ` sources embedded in the page (e.g. Next.js RSC payloads) against the surviving labels; unmatched ones become a `> **Diagram:** …` blockquote with the extracted labels
   - Headings: `## [Link](#anchor)` and `<a><h3>…</h3></a>` → `## Link`
   - Figures and captions (`<figure>`, `<figcaption>`) → image + italic caption
   - Pruned noise elements (`script`, `style`, `noscript`, `iframe`, `object`, `embed`, `footer`, `nav`, …)

@@ -150,6 +150,67 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
     });
   });
 
+  describe('mermaid rendered-garbage recovery (deepwiki-style)', () => {
+    // DeepWiki renders ```mermaid blocks inside <pre> wrappers; defuddle
+    // dissolves the resulting <svg> into scoped-CSS + glued label text.
+    const garbagePre =
+      '#mermaid-ab12{font-family:ui-sans-serif;fill:#333;}' +
+      '@keyframes edge-animation-frame{from{stroke-dashoffset:0;}}' +
+      '#mermaid-ab12 .edgePath .path{stroke:#666;}' +
+      'RuntimeCoreClientAppServerProcess';
+
+    const withBodyHtml = (html, fn) => {
+      Object.defineProperty(document.body, 'innerHTML', {
+        value: html,
+        configurable: true,
+        writable: true
+      });
+      try {
+        fn();
+      } finally {
+        delete document.body.innerHTML;
+      }
+    };
+
+    it('replaces mangled mermaid pre with fenced source from page payload', () => {
+      // Next.js RSC payload: escaped markdown inside a <script> push call
+      const rsc =
+        '<script>self.__next_f.push(["x","content:\\n```mermaid\\n' +
+        'graph TB\\n  Client[\\"ClientApp\\"] --> Server[\\"ServerProcess\\"]\\n  Server --> Runtime[\\"RuntimeCore\\"]\\n' +
+        '```\\n"])</script>';
+      const html = `<h3>Architecture</h3><pre><code>${garbagePre}</code></pre>`;
+      withBodyHtml(rsc, () => {
+        const normalized = converter.normalizeContentHtml(html);
+        const md = converter.turndown.turndown(normalized);
+        expect(md).toContain('```mermaid');
+        expect(md).toContain('Client["ClientApp"]');
+        expect(md).toContain('Server["ServerProcess"]');
+        expect(md).not.toContain('edge-animation-frame');
+      });
+    });
+
+    it('emits a label blockquote when no source matches', () => {
+      const html = `<pre><code>${garbagePre}</code></pre>`;
+      withBodyHtml('<p>no payloads here</p>', () => {
+        const normalized = converter.normalizeContentHtml(html);
+        const md = converter.turndown.turndown(normalized);
+        expect(md).not.toContain('edge-animation-frame');
+        expect(md).not.toContain('```');
+        expect(md).toContain('**Diagram:**');
+        expect(md).toContain('Runtime Core');
+        expect(md).toContain('Server Process');
+      });
+    });
+
+    it('leaves ordinary code blocks untouched', () => {
+      const html = `<pre><code>const x = { stroke: 1 }; console.log(x);</code></pre>`;
+      const normalized = converter.normalizeContentHtml(html);
+      const md = converter.turndown.turndown(normalized);
+      expect(md).toContain('```');
+      expect(md).toContain('console.log(x)');
+    });
+  });
+
   describe('defuddle fallback signals', () => {
     it('normalizeContentHtml preserves PRE count', () => {
       const html = `<article><pre><code>one</code></pre><pre><code>two</code></pre></article>`;
