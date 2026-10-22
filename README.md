@@ -121,7 +121,7 @@ For auditing, the main logic lives in:
 
 ## Development
 
-- **Manifest:** `manifest.json` (Manifest V2 for Firefox; `version` synced from `package.json` at build/publish time — `package.json` is the source of truth)
+- **Manifest:** `manifest.json` (Manifest V2 for Firefox; `version` is derived from `package.json` — `pnpm run sync-manifest` copies it, CI fails if they drift, `package.json` is the source of truth)
 - **Build:** Vite with three configs (`vite.content.config.js`, `vite.background.config.js`, `vite.options.config.js`) → `dist/`; `sourcemap: mode !== 'production'` so `pnpm dev` keeps maps and `pnpm build` drops them
 - **Tests:** `vitest` + `happy-dom` (`pnpm test`) — site extractors, tab state, mermaid handling, compressed tables, the code/mermaid/heading pipeline, frontmatter/filename edge cases, and `pickBestTrack`
 - **Golden files:** `src/pipeline.test.js` runs whole pages through the pipeline and compares against `tests/fixtures/pipeline/*.expected.md` (real captured pages: a mermaid.js.org article and a DeepWiki page). Regenerate with `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`

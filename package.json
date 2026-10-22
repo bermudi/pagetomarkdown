@@ -7,6 +7,7 @@
     "build": "pnpm run clean && vite build --config vite.content.config.js && vite build --config vite.background.config.js && vite build --config vite.options.config.js",
     "dev": "pnpm run clean && concurrently -k \"vite build --watch --config vite.content.config.js\" \"vite build --watch --config vite.background.config.js\" \"vite build --watch --config vite.options.config.js\"",
     "clean": "rm -rf dist",
+    "sync-manifest": "node scripts/sync-manifest.mjs",
     "test": "vitest run",
     "lint": "eslint src"
   },

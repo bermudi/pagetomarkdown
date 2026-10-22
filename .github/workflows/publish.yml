@@ -47,13 +47,7 @@ jobs:
         run: pnpm run lint
 
       - name: Sync manifest version from package.json
-        run: |
-          PKG_VER=$(jq -r .version package.json)
-          echo "package.json version: $PKG_VER"
-          MANI_VER=$(jq -r .version manifest.json)
-          echo "manifest.json version before: $MANI_VER"
-          jq --arg v "$PKG_VER" '.version = $v' manifest.json > /tmp/manifest.json && mv /tmp/manifest.json manifest.json
-          echo "manifest.json version after: $(jq -r .version manifest.json)"
+        run: node scripts/sync-manifest.mjs
 
       - name: Build extension
         run: pnpm run build

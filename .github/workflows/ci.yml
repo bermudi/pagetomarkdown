@@ -32,7 +32,10 @@ jobs:
       - name: Build extension
         run: pnpm run build
 
-      - name: Check manifest not dirtied by build (package.json is source of truth)
+      - name: Check manifest version matches package.json (package.json is the source of truth)
+        run: node scripts/sync-manifest.mjs --check
+
+      - name: Check manifest not dirtied by build
         run: |
           if ! git diff --quiet manifest.json; then
             echo "::error::manifest.json was mutated by build. package.json is the source of truth; build must not sed -i the tracked file."
@@ -40,7 +43,7 @@ jobs:
             exit 1
           fi
           PKG_VER=$(jq -r .version package.json)
-          echo "package.json version: $PKG_VER (manifest.json may lag; publish workflow syncs at tag time)"
+          echo "package.json version: $PKG_VER"
 
       - name: Lint extension (web-ext)
         run: npx --yes web-ext lint --source-dir .
