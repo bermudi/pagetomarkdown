@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => ({
         emptyOutDir: false,
         sourcemap: mode !== 'production',
         lib: {
-            entry: 'src/background.js',
+            entry: 'src/background.ts',
             name: 'PageToMarkdownBackground',
             formats: ['iife'],
             fileName: () => 'background.js'

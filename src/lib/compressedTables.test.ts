@@ -2,12 +2,23 @@ import { describe, it, expect } from 'vitest';
 
 import { buildTableElement, parseCompressedTable } from './compressedTables.js';
 
-const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
+const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
+
+/**
+ * Narrow a possibly-missing value, keeping the assertion in the test.
+ */
+function expectDefined<T>(value: T | null | undefined): T {
+    expect(value).toBeDefined();
+    expect(value).not.toBeNull();
+    if (value === null || value === undefined) throw new Error('expected a value');
+    return value;
+}
+
 
 describe('parseCompressedTable', () => {
     it('parses a compressed table with a heading', () => {
-        const table = parseCompressedTable(
-            '## My Table\n| col1 | col2 ||| --- | --- ||| a | b ||| c | d |'
+        const table = expectDefined(
+            parseCompressedTable('## My Table\n| col1 | col2 ||| --- | --- ||| a | b ||| c | d |')
         );
         expect(table).not.toBeNull();
         expect(table.heading).toEqual({ level: 2, text: 'My Table' });
@@ -16,7 +27,7 @@ describe('parseCompressedTable', () => {
     });
 
     it('parses a compressed table without a heading', () => {
-        const table = parseCompressedTable('| a | b ||| --- | --- ||| 1 | 2 |');
+        const table = expectDefined(parseCompressedTable('| a | b ||| --- | --- ||| 1 | 2 |'));
         expect(table.heading).toBeNull();
         expect(table.header).toEqual(['a', 'b']);
         expect(table.rows).toEqual([['1', '2']]);
@@ -41,11 +52,11 @@ describe('parseCompressedTable', () => {
 describe('buildTableElement', () => {
     it('builds a heading and a real table', () => {
         const doc = parse('<body></body>');
-        const table = parseCompressedTable('## My Table\n| col1 | col2 ||| --- | --- ||| a | b |');
+        const table = expectDefined(parseCompressedTable('## My Table\n| col1 | col2 ||| --- | --- ||| a | b |'));
         const fragment = buildTableElement(doc, table);
         doc.body.appendChild(fragment);
 
-        expect(doc.body.querySelector('h2').textContent).toBe('My Table');
+        expect(expectDefined(doc.body.querySelector('h2')).textContent).toBe('My Table');
         const rows = doc.body.querySelectorAll('table tr');
         expect(rows.length).toBe(2);
         expect(Array.from(rows[0].querySelectorAll('th')).map((th) => th.textContent)).toEqual(['col1', 'col2']);

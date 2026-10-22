@@ -132,10 +132,11 @@ For auditing, the main logic lives in:
 
 - **Manifest:** `manifest.json` (Manifest V2 for Firefox; `version` is derived from `package.json` — `pnpm run sync-manifest` copies it, CI fails if they drift, `package.json` is the source of truth)
 - **Build:** Vite with three configs (`vite.content.config.js`, `vite.background.config.js`, `vite.options.config.js`) → `dist/`; `sourcemap: mode !== 'production'` so `pnpm dev` keeps maps and `pnpm build` drops them
+- **Types:** TypeScript (strict). `src/` is `.ts`; `pnpm run typecheck` runs `tsc --noEmit` and CI enforces it. The extension's message contract lives in `src/lib/protocol.ts`; `src/types/` holds the declarations for packages that ship none (`webextension-polyfill`, `turndown-plugin-gfm`)
 - **Tests:** `vitest` + `happy-dom` (`pnpm test`) — site extractors, tab state, mermaid handling, compressed tables, the code/mermaid/heading pipeline, frontmatter/filename edge cases, and `pickBestTrack`
 - **Golden files:** `src/pipeline.test.js` runs whole pages through the pipeline and compares against `tests/fixtures/pipeline/*.expected.md` (real captured pages: a mermaid.js.org article and a DeepWiki page). Regenerate with `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`
 - **End-to-end:** `tests/e2e/firefox_e2e.py` installs the extension in Firefox, clicks the toolbar button on a real page and checks the file that lands on disk — `pnpm build && uv run --with marionette_driver python tests/e2e/firefox_e2e.py` (also runs in CI)
-- **Lint:** `eslint` (`pnpm run lint`; also `web-ext lint` in CI)
+- **Lint:** `eslint` (`pnpm run lint`; also `web-ext lint` in CI) — TypeScript files go through `typescript-eslint`
 - **Packaging:** `build_zip.sh` stages a version-patched `manifest.json` in a temp dir and zips `manifest.json` + `dist` + `icons` → `pagetomd-*.zip` (never mutates the tracked `manifest.json`)
 
 Typical dev loop:

@@ -19,16 +19,65 @@ import browser from 'webextension-polyfill';
 
 const YT_WATCH_RE = /^https?:\/\/(www\.)?youtube\.com\/watch\?/;
 
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export interface CaptionTrack {
+    baseUrl: string;
+    languageCode: string;
+    name?: { simpleText: string };
+    kind?: string;
+}
+
+export interface PlayerResponse {
+    captions?: {
+        playerCaptionsTracklistRenderer?: {
+            captionTracks?: CaptionTrack[];
+        };
+    };
+    videoDetails?: {
+        title?: string;
+        author?: string;
+        shortDescription?: string;
+        keywords?: string[];
+    };
+    microformat?: {
+        playerMicroformatRenderer?: {
+            ownerChannelName?: string;
+            publishDate?: string;
+        };
+    };
+}
+
+export interface TranscriptMetadata {
+    title: string;
+    author: string;
+    source: string;
+    url: string;
+    domain: string;
+    description: string;
+    publishedDate: string;
+    tags: string[];
+}
+
+export interface TranscriptResult {
+    found: boolean;
+    isYouTube: boolean;
+    markdown: string;
+    metadata: Partial<TranscriptMetadata>;
+}
+
 let ytDebug = false;
-function ytLog(...args) {
+function ytLog(...args: unknown[]): void {
     if (ytDebug) console.log('[PageToMD]', ...args);
 }
 // Pipeline checkpoints that should always be visible when diagnosing
 // "no transcript" reports — not gated behind the debug option.
-function ytTrace(...args) {
+function ytTrace(...args: unknown[]): void {
     console.info('[PageToMD:youtube]', ...args);
 }
-async function updateYtDebug() {
+async function updateYtDebug(): Promise<void> {
     try {
         const result = await browser.storage.local.get('debugLogging');
         ytDebug = !!result.debugLogging;
@@ -36,7 +85,7 @@ async function updateYtDebug() {
         ytDebug = false;
     }
 }
-function extractInnertubeApiKeyFromScripts() {
+function extractInnertubeApiKeyFromScripts(): string {
     for (const script of document.querySelectorAll('script')) {
         const text = script.textContent || '';
         const m = text.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
@@ -45,11 +94,11 @@ function extractInnertubeApiKeyFromScripts() {
     return '';
 }
 
-export function isYouTubeWatchPage() {
+export function isYouTubeWatchPage(): boolean {
     return YT_WATCH_RE.test(window.location.href);
 }
 
-function getVideoId() {
+function getVideoId(): string {
     return new URL(window.location.href).searchParams.get('v') || '';
 }
 
@@ -57,12 +106,12 @@ function getVideoId() {
 /*  1.  Inline HTML helpers (fallback only)                           */
 /* ------------------------------------------------------------------ */
 
-function extractInnertubeApiKey(html) {
+function extractInnertubeApiKey(html: string): string {
     const m = html.match(/"INNERTUBE_API_KEY":\s*"([a-zA-Z0-9_-]+)"/);
     return m?.[1] || '';
 }
 
-function extractCaptionTracksFromHtml(html) {
+function extractCaptionTracksFromHtml(html: string): CaptionTrack[] | null {
     const parts = html.split('"captions":');
     if (parts.length < 2) return null;
     const jsonPart = parts[1].split(',"videoDetails')[0].replace('\n', '');
@@ -70,7 +119,7 @@ function extractCaptionTracksFromHtml(html) {
     try {
         const renderer = JSON.parse(jsonPart).playerCaptionsTracklistRenderer;
         if (!renderer?.captionTracks) return null;
-        return renderer.captionTracks.map((t) => ({
+        return renderer.captionTracks.map((t: CaptionTrack) => ({
             baseUrl: t.baseUrl.startsWith('/api/timedtext')
                 ? `https://www.youtube.com${t.baseUrl}`
                 : t.baseUrl,
@@ -83,19 +132,19 @@ function extractCaptionTracksFromHtml(html) {
     }
 }
 
-function extractYtInitialPlayerResponseFromDom() {
+function extractYtInitialPlayerResponseFromDom(): PlayerResponse | null {
     for (const script of document.querySelectorAll('script')) {
         const text = script.textContent || '';
         if (!text.includes('ytInitialPlayerResponse')) continue;
 
-        let idx = text.indexOf('var ytInitialPlayerResponse');
+        const idx = text.indexOf('var ytInitialPlayerResponse');
         if (idx !== -1) {
             const eq = text.indexOf('=', idx);
             if (eq !== -1) {
                 let depth = 0;
                 let inStr = false;
                 let esc = false;
-                let start = eq + 1;
+                const start = eq + 1;
                 let i = start;
                 for (; i < text.length; i++) {
                     const ch = text[i];
@@ -124,7 +173,7 @@ const ANDROID_CONTEXT = {
     }
 };
 
-async function fetchPlayerResponse(videoId, apiKey) {
+async function fetchPlayerResponse(videoId: string, apiKey: string): Promise<PlayerResponse> {
     const url = `https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}`;
     const resp = await fetch(url, {
         method: 'POST',
@@ -149,9 +198,9 @@ const LANG_FALLBACK_CHAIN = [
     'en', 'de', 'fr', 'es', 'it', 'zh', 'ja', 'ko', 'pt', 'ru'
 ];
 
-export function pickBestTrack(tracks) {
+export function pickBestTrack(tracks: CaptionTrack[] | null | undefined): CaptionTrack | null {
     if (!tracks || tracks.length === 0) return null;
-    const byTwo = (code) => code.toLowerCase().slice(0, 2);
+    const byTwo = (code: string) => code.toLowerCase().slice(0, 2);
 
     const enTracks = tracks.filter((t) => byTwo(t.languageCode) === 'en');
     const manualEn = enTracks.find((t) => t.kind !== 'asr');
@@ -173,7 +222,7 @@ export function pickBestTrack(tracks) {
  * describes the *first* video loaded in the tab, so HTML/DOM fallbacks can
  * hand us tracks for the wrong video. Filter those out.
  */
-export function isTrackForVideo(track, videoId) {
+export function isTrackForVideo(track: { baseUrl?: string } | null | undefined, videoId: string): boolean {
     if (!track?.baseUrl || !videoId) return false;
     try {
         const v = new URL(track.baseUrl).searchParams.get('v');
@@ -188,11 +237,11 @@ export function isTrackForVideo(track, videoId) {
 /*  4.  Timestamp formatting                                          */
 /* ------------------------------------------------------------------ */
 
-function formatTimestamp(seconds) {
+function formatTimestamp(seconds: number): string {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
-    const pad = (n) => String(n).padStart(2, '0');
+    const pad = (n: number) => String(n).padStart(2, '0');
     if (hrs > 0) return `${hrs}:${pad(mins)}:${pad(secs)}`;
     return `${mins}:${pad(secs)}`;
 }
@@ -201,7 +250,7 @@ function formatTimestamp(seconds) {
 /*  5.  Transcript fetch with debugging                               */
 /* ------------------------------------------------------------------ */
 
-async function fetchTranscriptXml(baseUrl) {
+async function fetchTranscriptXml(baseUrl: string): Promise<string[]> {
     const url = new URL(baseUrl);
     url.searchParams.delete('fmt');
 
@@ -221,7 +270,7 @@ async function fetchTranscriptXml(baseUrl) {
     const doc = parser.parseFromString(text, 'text/xml');
     const texts = doc.getElementsByTagName('text');
 
-    const lines = [];
+    const lines: string[] = [];
     for (const el of Array.from(texts)) {
         const raw = el.textContent || '';
         const decoded = raw
@@ -242,7 +291,7 @@ async function fetchTranscriptXml(baseUrl) {
     return lines;
 }
 
-async function fetchTranscriptJson3(baseUrl) {
+async function fetchTranscriptJson3(baseUrl: string): Promise<string[]> {
     const url = new URL(baseUrl);
     url.searchParams.delete('fmt');
     url.searchParams.set('fmt', 'json3');
@@ -263,7 +312,7 @@ async function fetchTranscriptJson3(baseUrl) {
     for (const event of events) {
         if (!event.segs || event.segs.length === 0) continue;
         const text = event.segs
-            .map((seg) => seg.utf8 || '')
+            .map((seg: { utf8?: string }) => seg.utf8 || '')
             .join('')
             .replace(/\n/g, ' ')
             .trim();
@@ -280,7 +329,7 @@ async function fetchTranscriptJson3(baseUrl) {
 /*  6.  DOM panel scraping (last resort)                              */
 /* ------------------------------------------------------------------ */
 
-function querySelectorDeep(root, selector) {
+function querySelectorDeep(root: ParentNode | null, selector: string): Element | null {
     if (!root) return null;
     const el = root.querySelector(selector);
     if (el) return el;
@@ -293,7 +342,7 @@ function querySelectorDeep(root, selector) {
     return null;
 }
 
-function querySelectorAllDeep(root, selector) {
+function querySelectorAllDeep(root: ParentNode | null, selector: string): Element[] {
     if (!root) return [];
     const out = Array.from(root.querySelectorAll(selector));
     for (const h of root.querySelectorAll('*')) {
@@ -302,7 +351,7 @@ function querySelectorAllDeep(root, selector) {
     return out;
 }
 
-export function scrapeTranscriptFromDom() {
+export function scrapeTranscriptFromDom(): string[] | null {
     // Old UI: ytd-transcript-body-renderer > ytd-transcript-segment-renderer
     const panel = querySelectorDeep(document, 'ytd-transcript-body-renderer');
     if (panel) {
@@ -362,12 +411,33 @@ const PANEL_OPEN_TIMEOUT_MS = 15000;
  * script world boundaries, so listening from the extension captures
  * transcript data whenever the page loads it, however it was triggered.
  */
-let harvestedTranscript = null;
+let harvestedTranscript: string[] | null = null;
 let harvestListenerAttached = false;
 
-export function parseTranscriptFromPanelContent(content) {
-    const items = content?.sectionListRenderer?.contents || [];
-    const lines = [];
+interface PanelContent {
+    sectionListRenderer?: {
+        contents?: {
+            itemSectionRenderer?: {
+                contents?: {
+                    macroMarkersPanelItemViewModel?: {
+                        item?: {
+                            timelineItemViewModel?: {
+                                timestamp?: string;
+                                contentItems?: {
+                                    transcriptSegmentViewModel?: { simpleText?: string };
+                                }[];
+                            };
+                        };
+                    };
+                }[];
+            };
+        }[];
+    };
+}
+
+export function parseTranscriptFromPanelContent(content: unknown): string[] | null {
+    const items = (content as PanelContent)?.sectionListRenderer?.contents || [];
+    const lines: string[] = [];
     for (const item of items) {
         const markers = item?.itemSectionRenderer?.contents || [];
         for (const mk of markers) {
@@ -385,14 +455,17 @@ export function parseTranscriptFromPanelContent(content) {
     return lines.length ? lines : null;
 }
 
-export function ensureTranscriptHarvestListener() {
+export function ensureTranscriptHarvestListener(): void {
     if (harvestListenerAttached) return;
     harvestListenerAttached = true;
     window.addEventListener(
         'yt-action',
-        (e) => {
+        (event: Event) => {
             try {
-                const d = e.detail;
+                const d = (event as CustomEvent).detail as {
+                    actionName?: string;
+                    args?: { content?: unknown; panelIdentifier?: string }[];
+                };
                 if (d?.actionName !== 'yt-engagement-panel-visible-changed') return;
                 const a = d.args?.[0];
                 if (!a || !/transcript/i.test(String(a.panelIdentifier || ''))) return;
@@ -421,19 +494,19 @@ const TRANSCRIPT_PANEL_SELECTORS = [
 ];
 const SEGMENT_SELECTORS = 'ytd-transcript-segment-renderer, transcript-segment-view-model';
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getTranscriptPanel() {
+function getTranscriptPanel(): HTMLElement | null {
     for (const selector of TRANSCRIPT_PANEL_SELECTORS) {
-        const panel = querySelectorDeep(document, selector);
+        const panel = querySelectorDeep(document, selector) as HTMLElement | null;
         if (panel) return panel;
     }
     return null;
 }
 
-export function findTranscriptTriggerButton() {
+export function findTranscriptTriggerButton(): HTMLElement | null {
     const section = querySelectorDeep(document, 'ytd-video-description-transcript-section-renderer');
     if (section) {
         const buttons = Array.from(section.querySelectorAll('button'));
@@ -461,7 +534,7 @@ export function findTranscriptTriggerButton() {
  * page's attested transcript machinery, so it keeps working when raw
  * timedtext/get_transcript calls are rejected.
  */
-export async function openTranscriptPanelAndScrape() {
+export async function openTranscriptPanelAndScrape(): Promise<string[] | null> {
     ytLog('Trying to open the transcript panel in the page UI');
 
     const descriptionExpander = document.querySelector('#description-inline-expander');
@@ -474,20 +547,20 @@ export async function openTranscriptPanelAndScrape() {
         if (!wasPanelVisible) {
             const panel = getTranscriptPanel();
             if (panel?.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
-                findTranscriptTriggerButton()?.click();
+                findTranscriptTriggerButton()?.dispatchEvent(new MouseEvent('click'));
                 await sleep(400);
             }
         }
         if (!wasDescriptionExpanded) {
             document
-                .querySelector('#description-inline-expander #collapse')
+                .querySelector<HTMLElement>('#description-inline-expander #collapse')
                 ?.click();
         }
     };
 
     try {
         if (!wasDescriptionExpanded) {
-            const expand = document.querySelector('#description-inline-expander #expand');
+            const expand = document.querySelector<HTMLElement>('#description-inline-expander #expand');
             if (expand) {
                 ytLog('Expanding the video description to reach the transcript button');
                 expand.click();
@@ -565,7 +638,7 @@ export async function openTranscriptPanelAndScrape() {
 /*  7.  Metadata                                                      */
 /* ------------------------------------------------------------------ */
 
-function extractYouTubeMetadata(playerResponse) {
+function extractYouTubeMetadata(playerResponse: PlayerResponse | null): TranscriptMetadata {
     const vd = playerResponse?.videoDetails || {};
     const mi = playerResponse?.microformat?.playerMicroformatRenderer || {};
     return {
@@ -584,7 +657,7 @@ function extractYouTubeMetadata(playerResponse) {
 /*  8.  Main entry point                                              */
 /* ------------------------------------------------------------------ */
 
-export async function tryExtractYouTubeTranscript() {
+export async function tryExtractYouTubeTranscript(): Promise<TranscriptResult> {
     if (!isYouTubeWatchPage()) {
         return { found: false, isYouTube: false, markdown: '', metadata: {} };
     }
@@ -598,7 +671,7 @@ export async function tryExtractYouTubeTranscript() {
     ensureTranscriptHarvestListener();
     ytLog('YouTube video ID:', videoId);
 
-    let htmlCache = null;
+    let htmlCache: string | null = null;
     const getHtml = () => {
         if (htmlCache === null) htmlCache = document.documentElement.innerHTML;
         return htmlCache;
@@ -606,8 +679,8 @@ export async function tryExtractYouTubeTranscript() {
     const apiKey = extractInnertubeApiKeyFromScripts() || extractInnertubeApiKey(getHtml());
     ytLog('API key:', apiKey ? 'found' : 'missing');
 
-    let captionTracks = null;
-    let playerResponse = null;
+    let captionTracks: CaptionTrack[] | null = null;
+    let playerResponse: PlayerResponse | null = null;
 
     /* -------------------------------------------------------------- */
     /*  1. PRIMARY: ANDROID client for FRESH tracks                   */
@@ -615,10 +688,10 @@ export async function tryExtractYouTubeTranscript() {
     if (apiKey) {
         try {
             playerResponse = await fetchPlayerResponse(videoId, apiKey);
-            captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+            captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? null;
             ytLog('captionTracks from ANDROID player API:', captionTracks?.length ?? 'none');
         } catch (err) {
-            ytTrace('ANDROID player API failed:', err?.message ?? err);
+            ytTrace('ANDROID player API failed:', errorMessage(err));
         }
     }
 
@@ -633,7 +706,7 @@ export async function tryExtractYouTubeTranscript() {
                 ytLog('captionTracks from HTML regex:', captionTracks.length);
             }
         } catch (err) {
-            ytTrace('HTML regex extract failed:', err?.message ?? err);
+            ytTrace('HTML regex extract failed:', errorMessage(err));
         }
     }
 
@@ -656,7 +729,7 @@ export async function tryExtractYouTubeTranscript() {
     /* -------------------------------------------------------------- */
     /*  4. Try to fetch transcript                                    */
     /* -------------------------------------------------------------- */
-    let lines = [];
+    let lines: string[] = [];
 
     if (captionTracks && captionTracks.length > 0) {
         const track = pickBestTrack(captionTracks);
@@ -668,7 +741,7 @@ export async function tryExtractYouTubeTranscript() {
                 lines = await fetchTranscriptXml(track.baseUrl);
                 ytLog('XML fetch lines:', lines.length);
             } catch (err) {
-                ytTrace(`timedtext ${track.languageCode} XML failed:`, err?.message ?? err);
+                ytTrace(`timedtext ${track.languageCode} XML failed:`, errorMessage(err));
             }
 
             // Try JSON3
@@ -677,7 +750,7 @@ export async function tryExtractYouTubeTranscript() {
                     lines = await fetchTranscriptJson3(track.baseUrl);
                     ytLog('JSON3 fetch lines:', lines.length);
                 } catch (err) {
-                    ytTrace('timedtext json3 failed:', err?.message ?? err);
+                    ytTrace('timedtext json3 failed:', errorMessage(err));
                 }
             }
         } else {
@@ -702,7 +775,7 @@ export async function tryExtractYouTubeTranscript() {
         try {
             lines = (await openTranscriptPanelAndScrape()) || [];
         } catch (err) {
-            ytTrace('Panel-driven transcript scrape failed:', err?.message ?? err);
+            ytTrace('Panel-driven transcript scrape failed:', errorMessage(err));
         }
     }
 

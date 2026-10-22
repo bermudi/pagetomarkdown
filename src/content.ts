@@ -13,19 +13,33 @@ import { detectLanguageForPre } from './lib/codeBlocks';
 import { extractMetadata } from './lib/metadata';
 import { createTurndownService } from './lib/turndownRules';
 import { extractPoeConversation } from './lib/poeExtractor';
+import type TurndownService from 'turndown';
+import type { DefuddleResponse } from 'defuddle';
+
 import { preserveActiveTabs } from './lib/tabState';
+import type { TabStateResult } from './lib/tabState';
+import type { PageMetadata } from './lib/metadata';
+import { isTriggerConversion } from './lib/protocol';
+import type { ConversionOptions } from './lib/turndownRules';
 import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
 
-export class AdvancedMarkdownConverter {
-    constructor() {
-        this.turndown = null;
-        this.debug = false;
-        // Metadata only. The *content* never lives here — it is returned by
-        // extractMainContent() as a single object.
-        this.defuddleResult = null;
-        this.options = { stripLinks: false, stripImages: false };
-        this.metadataOverrides = null;
+export interface ExtractedContent {
+    element: Element;
+    html?: string;
+    kind: 'claude' | 'poe' | 'reddit' | 'defuddle' | 'body-fallback' | string;
+    wordCount?: number;
+}
 
+export class AdvancedMarkdownConverter {
+    turndown: TurndownService;
+    debug = false;
+    // Metadata only. The *content* never lives here — it is returned by
+    // extractMainContent() as a single object.
+    defuddleResult: DefuddleResponse | null = null;
+    options: ConversionOptions = { stripLinks: false, stripImages: false };
+    metadataOverrides: Record<string, unknown> | null = null;
+
+    constructor() {
         this.turndown = createTurndownService({
             getOptions: () => this.options,
             log: (...args) => this.log(...args)
@@ -33,15 +47,15 @@ export class AdvancedMarkdownConverter {
         this.setupListeners();
     }
 
-    setupListeners() {
-        browser.runtime.onMessage.addListener((message) => {
-            if (message?.action === 'trigger_conversion') {
-                void this.processPage(message?.options);
+    setupListeners(): void {
+        browser.runtime.onMessage.addListener((message: unknown) => {
+            if (isTriggerConversion(message)) {
+                void this.processPage(message.options);
             }
         });
     }
 
-    async processPage(options) {
+    async processPage(options?: Partial<ConversionOptions>): Promise<void> {
         try {
             const debugResult = await browser.storage.local.get('debugLogging');
             this.debug = !!debugResult.debugLogging;
@@ -59,7 +73,7 @@ export class AdvancedMarkdownConverter {
         try {
             const yt = await tryExtractYouTubeTranscript();
             if (yt.found) {
-                await this.sendToBackground(yt.markdown, yt.metadata);
+                await this.sendToBackground(yt.markdown, yt.metadata as unknown as PageMetadata);
                 this.log('YouTube transcript sent to background.');
                 return;
             }
@@ -79,7 +93,8 @@ export class AdvancedMarkdownConverter {
             this.log('Conversion sent to background.');
         } catch (error) {
             console.error('Processing failed:', error);
-            alert('Failed to convert page: ' + (error?.message ?? String(error)));
+            const message = error instanceof Error ? error.message : String(error);
+            alert('Failed to convert page: ' + message);
         }
     }
 
@@ -133,7 +148,7 @@ export class AdvancedMarkdownConverter {
             };
         }
 
-        const originalBodyClone = document.body.cloneNode(true);
+        const originalBodyClone = document.body.cloneNode(true) as HTMLElement;
         const tabStateResult = this.preserveInteractiveState(originalBodyClone);
         const prunedNoise = pruneNoiseElements(originalBodyClone, (...args) => this.log(...args));
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
@@ -189,7 +204,7 @@ export class AdvancedMarkdownConverter {
         };
     }
 
-    shouldFallbackToOriginalCodeBlocks(originalBody, parsedBody) {
+    shouldFallbackToOriginalCodeBlocks(originalBody: Element, parsedBody: Element): boolean {
         const originalPreCount = originalBody ? originalBody.querySelectorAll('pre').length : 0;
         if (originalPreCount === 0) {
             return false;
@@ -205,7 +220,7 @@ export class AdvancedMarkdownConverter {
         return this.hasMeaningfulCodeBlocks(originalBody) && !this.hasMeaningfulCodeBlocks(parsedBody);
     }
 
-    parseContentFragment(html) {
+    parseContentFragment(html: string | null | undefined): HTMLElement | null {
         if (!html) return null;
         try {
             const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -223,7 +238,7 @@ export class AdvancedMarkdownConverter {
      * falls back to the noise-pruned page body instead of shipping an
      * almost empty document.
      */
-    isSubstantiveExtraction(parsedBody, originalBody) {
+    isSubstantiveExtraction(parsedBody: Element | null, originalBody: Element): boolean {
         const extractedLength = (parsedBody?.textContent || '').replace(/\s+/g, '').length;
         if (extractedLength >= 64) return true;
 
@@ -239,7 +254,7 @@ export class AdvancedMarkdownConverter {
      * detached from the document, so class-driven hiding (sr-only etc.)
      * cannot be computed here.
      */
-    preserveInteractiveState(root) {
+    preserveInteractiveState(root: Element | null): TabStateResult {
         if (!root) {
             return { tablistsProcessed: 0, panelsRemoved: 0 };
         }
@@ -252,7 +267,7 @@ export class AdvancedMarkdownConverter {
         }
     }
 
-    createDocumentForDefuddle(bodyClone) {
+    createDocumentForDefuddle(bodyClone: Element | null): Document {
         const doc = document.implementation.createHTMLDocument(document.title || 'Page to Markdown');
 
         const sourceHead = document.head;
@@ -271,16 +286,16 @@ export class AdvancedMarkdownConverter {
         return doc;
     }
 
-    hasMeaningfulCodeBlocks(root) {
+    hasMeaningfulCodeBlocks(root: Element | null): boolean {
         if (!root) return false;
-        return Array.from(root.querySelectorAll('pre')).some((pre) => {
+        return Array.from(root.querySelectorAll('pre')).some((pre: Element) => {
             const codeEl = pre.querySelector('code');
             const text = (codeEl?.textContent ?? pre.textContent ?? '').trim();
             return text.length > 10;
         });
     }
 
-    convertToMarkdown(content) {
+    convertToMarkdown(content: ExtractedContent): string {
         if (!this.turndown) throw new Error('Turndown not initialized');
 
         const element = content?.element;
@@ -305,7 +320,7 @@ export class AdvancedMarkdownConverter {
         return cleaned;
     }
 
-    normalizeContentHtml(html) {
+    normalizeContentHtml(html: string): string {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const body = doc.body || doc.documentElement;
 
@@ -387,11 +402,11 @@ export class AdvancedMarkdownConverter {
         return result;
     }
 
-    cleanupMarkdown(markdown) {
+    cleanupMarkdown(markdown: string): string {
         return markdown.replace(/\n{4,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim();
     }
 
-    extractMetadata(content) {
+    extractMetadata(content: ExtractedContent): PageMetadata {
         return extractMetadata({
             content,
             defuddleResult: this.defuddleResult,
@@ -399,17 +414,23 @@ export class AdvancedMarkdownConverter {
         });
     }
 
-    sendToBackground(markdown, metadata) {
+    sendToBackground(markdown: string, metadata: PageMetadata): Promise<unknown> {
         return browser.runtime.sendMessage({
             type: 'DOWNLOAD_MARKDOWN',
             data: { markdown, metadata, options: this.options }
         });
     }
 
-    log(...args) {
+    log(...args: unknown[]): void {
         if (this.debug) {
             console.log('[PageToMD]', ...args);
         }
+    }
+}
+
+declare global {
+    interface Window {
+        markdownConverter?: AdvancedMarkdownConverter;
     }
 }
 

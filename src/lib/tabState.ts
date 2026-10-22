@@ -1,9 +1,20 @@
-function getTablists(root) {
+interface ControlledPanel {
+    tab: Element;
+    panel: Element;
+    panelId: string;
+}
+
+export interface TabStateResult {
+    tablistsProcessed: number;
+    panelsRemoved: number;
+}
+
+function getTablists(root: Element | null): Element[] {
     if (!root?.querySelectorAll) return [];
     return Array.from(root.querySelectorAll('[role="tablist"], [data-geist-tabs]'));
 }
 
-function getActiveTab(tablist) {
+function getActiveTab(tablist: Element): Element | null {
     const tabs = Array.from(tablist.querySelectorAll('[role="tab"], button, [data-geist-tab]'));
     return (
         tabs.find((tab) => tab.getAttribute('aria-selected') === 'true') ||
@@ -12,7 +23,7 @@ function getActiveTab(tablist) {
     );
 }
 
-function getControlledPanels(tablist, root) {
+function getControlledPanels(tablist: Element, root: Element): ControlledPanel[] {
     const tabs = Array.from(tablist.querySelectorAll('[aria-controls]'));
     const panelEntries = [];
 
@@ -27,7 +38,7 @@ function getControlledPanels(tablist, root) {
     return panelEntries;
 }
 
-function collectPanelNodes(panel) {
+function collectPanelNodes(panel: Element): Element[] {
     if (!panel) return [];
     const nodes = [panel];
 
@@ -44,7 +55,7 @@ function collectPanelNodes(panel) {
     return nodes;
 }
 
-export function preserveActiveTabs(root) {
+export function preserveActiveTabs(root: Element | null): TabStateResult {
     if (!root?.querySelectorAll) return { tablistsProcessed: 0, panelsRemoved: 0 };
 
     let tablistsProcessed = 0;

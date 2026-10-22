@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { Window } from 'happy-dom';
 import { extractPoeConversation, isPoeConversationPage } from './poeExtractor.js';
 
-function createDocument(html, url) {
+function createDocument(html: string, url: string): Document {
     const window = new Window();
     window.document.body.innerHTML = html;
     window.location.href = url;
-    return window.document;
+    // happy-dom's Document is not the DOM lib's Document, structurally.
+    return window.document as unknown as Document;
 }
 
 const sampleHtml = `
@@ -30,6 +31,17 @@ const sampleHtml = `
     </div>
 `;
 
+/**
+ * Narrow a possibly-missing value, keeping the assertion in the test.
+ */
+function expectDefined<T>(value: T | null | undefined): T {
+    expect(value).toBeDefined();
+    expect(value).not.toBeNull();
+    if (value === null || value === undefined) throw new Error('expected a value');
+    return value;
+}
+
+
 describe('poeExtractor', () => {
     const poeUrl = 'https://poe.com/chat/abc123';
 
@@ -52,7 +64,7 @@ describe('poeExtractor', () => {
 
     it('extracts every message with its role and speaker', () => {
         const doc = createDocument(sampleHtml, poeUrl);
-        const result = extractPoeConversation(doc);
+        const result = expectDefined(extractPoeConversation(doc));
         expect(result).not.toBeNull();
 
         const { article } = result;
@@ -73,14 +85,14 @@ describe('poeExtractor', () => {
 
     it('strips overflow buttons from the message body', () => {
         const doc = createDocument(sampleHtml, poeUrl);
-        const { article } = extractPoeConversation(doc);
+        const { article } = expectDefined(extractPoeConversation(doc));
         expect(article.textContent).not.toContain('More');
     });
 
     it('exposes metadata overrides for the frontmatter', () => {
         const doc = createDocument(sampleHtml, poeUrl);
         doc.title = 'centering a div';
-        const { metadataOverrides } = extractPoeConversation(doc);
+        const { metadataOverrides } = expectDefined(extractPoeConversation(doc));
         expect(metadataOverrides.title).toBe('centering a div');
         expect(metadataOverrides.author).toBe('helper-bot');
         expect(metadataOverrides.source).toBe('poe.com');

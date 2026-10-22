@@ -2,12 +2,24 @@ import { describe, it, expect } from 'vitest';
 import { Window } from 'happy-dom';
 import { extractRedditThread, isRedditThreadPage } from './redditExtractor.js';
 
-function createDocument(html, url) {
+function createDocument(html: string, url: string): Document {
     const window = new Window();
     window.document.body.innerHTML = html;
     window.location.href = url;
-    return window.document;
+    // happy-dom's Document is not the DOM lib's Document, structurally.
+    return window.document as unknown as Document;
 }
+
+/**
+ * Narrow a possibly-missing value, keeping the assertion in the test.
+ */
+function expectDefined<T>(value: T | null | undefined): T {
+    expect(value).toBeDefined();
+    expect(value).not.toBeNull();
+    if (value === null || value === undefined) throw new Error('expected a value');
+    return value;
+}
+
 
 describe('redditExtractor', () => {
     const redditUrl = 'https://old.reddit.com/r/explainlikeimfive/comments/1rskdh6/thread/';
@@ -79,7 +91,7 @@ describe('redditExtractor', () => {
 
     it('extracts article content, metadata, and comments', () => {
         const doc = createDocument(sampleHtml, redditUrl);
-        const result = extractRedditThread(doc);
+        const result = expectDefined(extractRedditThread(doc));
         expect(result).not.toBeNull();
 
         const { article, metadataOverrides } = result;
@@ -90,8 +102,7 @@ describe('redditExtractor', () => {
         expect(postMeta?.textContent).toContain('u/bermudi86');
         expect(postMeta?.textContent).toContain('r/explainlikeimfive');
 
-        const commentSection = article.querySelector('.reddit-comments');
-        expect(commentSection).not.toBeNull();
+        const commentSection = expectDefined(article.querySelector('.reddit-comments'));
         const comments = commentSection.querySelectorAll('ol[data-comment-depth] > li');
         expect(comments.length).toBeGreaterThan(0);
         const nestedList = commentSection.querySelector('ol[data-comment-depth="1"]');
@@ -121,7 +132,7 @@ describe('redditExtractor', () => {
 
     it('still extracts old reddit when #siteTable present', () => {
         const doc = createDocument(sampleHtml, 'https://www.reddit.com/r/test/comments/abc123/old/');
-        const result = extractRedditThread(doc);
+        const result = expectDefined(extractRedditThread(doc));
         expect(result).not.toBeNull();
         expect(result.article.querySelector('h1')?.textContent).toContain('ELI5 title');
     });

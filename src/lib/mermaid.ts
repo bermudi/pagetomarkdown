@@ -44,7 +44,7 @@ const MIN_MATCH_HITS = 2;
  * (`\n` instead of newlines) when they travel inside a JSON/script payload,
  * so the decoded form is what gets returned.
  */
-export function collectMermaidSources(html) {
+export function collectMermaidSources(html: string): string[] {
     if (!html) return [];
 
     const results = [];
@@ -58,7 +58,7 @@ export function collectMermaidSources(html) {
     return results;
 }
 
-export function unescapeEmbeddedText(text) {
+export function unescapeEmbeddedText(text: string): string {
     if (!text) return '';
     let result = String(text);
     result = result.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
@@ -94,9 +94,9 @@ const LABEL_PATTERNS = [
     /\|([^|\n]{2,})\|/g
 ];
 
-export function mermaidSourceLabels(source) {
+export function mermaidSourceLabels(source: string): string[] {
     if (!source) return [];
-    const found = new Set();
+    const found = new Set<string>();
     for (const pattern of LABEL_PATTERNS) {
         const re = new RegExp(pattern.source, 'g');
         let match;
@@ -110,12 +110,12 @@ export function mermaidSourceLabels(source) {
 
 // Markup the source may carry around a label ("**bold**") but the renderer
 // drops.
-function normalizeLabel(label) {
+function normalizeLabel(label: string): string {
     return (label || '').replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-export function mermaidCandidateTokens(source) {
-    const tokens = new Set();
+export function mermaidCandidateTokens(source: string): Set<string> {
+    const tokens = new Set<string>();
     const re = /[A-Za-z][A-Za-z0-9_]*(?:[./][A-Za-z0-9_./-]+)*/g;
     let m;
     while ((m = re.exec(source))) {
@@ -141,7 +141,11 @@ export function mermaidCandidateTokens(source) {
  * against a runner-up of 0.20–0.33, while the identifier score gave
  * 0.74–0.92 against 0.28–0.33. Labels win when a source has them.
  */
-export function scoreMermaidSourceByText(haystack, source, metric = 'label') {
+export function scoreMermaidSourceByText(
+    haystack: string,
+    source: string,
+    metric: 'label' | 'token' = 'label'
+): MermaidScore {
     if (!haystack || !source) return { score: 0, hits: 0 };
 
     const labels = mermaidSourceLabels(source);
@@ -177,7 +181,11 @@ export function scoreMermaidSourceByText(haystack, source, metric = 'label') {
  * labels (a diagram whose labels are only partly rendered), the identifier
  * score gets a second chance.
  */
-export function matchMermaidSourceByText(haystack, candidates, consumed) {
+export function matchMermaidSourceByText(
+    haystack: string,
+    candidates: string[],
+    consumed?: Set<string>
+): string {
     const byLabel = rankMermaidSourcesByText(haystack, candidates, consumed, 'label')[0];
     if (byLabel && byLabel.score >= MATCH_SCORE_THRESHOLD && byLabel.hits >= MIN_MATCH_HITS) {
         return byLabel.source;
@@ -191,7 +199,12 @@ export function matchMermaidSourceByText(haystack, candidates, consumed) {
     return '';
 }
 
-export function rankMermaidSourcesByText(haystack, candidates, consumed, metric = 'label') {
+export function rankMermaidSourcesByText(
+    haystack: string,
+    candidates: string[],
+    consumed?: Set<string>,
+    metric: 'label' | 'token' = 'label'
+): MermaidRanked[] {
     if (!haystack || !candidates?.length) return [];
     const ranked = [];
     for (const cand of candidates) {
@@ -209,7 +222,7 @@ export function rankMermaidSourcesByText(haystack, candidates, consumed, metric 
  * extracted content — i.e. the live page's SVG was dropped by the
  * extractor, but the selection still carries the diagram's labels.
  */
-export function sourceExplainsLabels(source, haystack) {
+export function sourceExplainsLabels(source: string, haystack: string): boolean {
     const { score, hits } = scoreMermaidSourceByText(haystack, source);
     return score >= MATCH_SCORE_THRESHOLD && hits >= MIN_MATCH_HITS;
 }
@@ -223,7 +236,7 @@ export function sourceExplainsLabels(source, haystack) {
  * the rendered SVG and an extractor then flattens the SVG to text: the
  * scoped <style> rules followed by concatenated node labels.
  */
-export function isMermaidGarbageText(text) {
+export function isMermaidGarbageText(text: string): boolean {
     if (!text) return false;
     if (/^#\S*mermaid\S*\s*\{/i.test(text)) return true;
     if (text.includes('edge-animation-frame')) return true;
@@ -237,7 +250,7 @@ export function isMermaidGarbageText(text) {
  * The label tail of a rendered-mermaid text blob: everything after the
  * last CSS '}' is the concatenated node/edge labels.
  */
-export function extractMermaidRenderedLabels(text) {
+export function extractMermaidRenderedLabels(text: string): string {
     if (!text) return '';
     const tail = text.slice(text.lastIndexOf('}') + 1);
     const spaced = tail
@@ -251,7 +264,7 @@ export function extractMermaidRenderedLabels(text) {
 /*  SVG helpers                                                        */
 /* ------------------------------------------------------------------ */
 
-export function isMermaidSvg(svg) {
+export function isMermaidSvg(svg: Element | null): boolean {
     if (!svg) return false;
     const id = svg.getAttribute('id') || '';
     const className = svg.getAttribute('class') || '';
@@ -268,12 +281,12 @@ export function isMermaidSvg(svg) {
  * Mermaid renders a diagram it could not parse as an SVG containing the
  * error message. Embedding that as an image ships a picture of an error.
  */
-export function isMermaidErrorSvg(svgElement) {
+export function isMermaidErrorSvg(svgElement: Element | null): boolean {
     const text = svgElement?.textContent || '';
     return /syntax error|mermaid version|error rendering/i.test(text);
 }
 
-export function svgToDataUri(svgElement) {
+export function svgToDataUri(svgElement: Element): string {
     try {
         const serializer = new XMLSerializer();
         let svgText = serializer.serializeToString(svgElement);
@@ -291,7 +304,15 @@ export function svgToDataUri(svgElement) {
     }
 }
 
-export function buildMermaidPre(doc, source) {
+/**
+ * `innerText` is not on every element type, and not at all outside a
+ * browser; fall back to textContent.
+ */
+function innerTextOf(element: Element): string | undefined {
+    return 'innerText' in element ? (element as HTMLElement).innerText : undefined;
+}
+
+export function buildMermaidPre(doc: Document, source: string): HTMLPreElement {
     const pre = doc.createElement('pre');
     pre.setAttribute('data-pagetomd-generated', 'mermaid');
     const code = doc.createElement('code');
@@ -307,7 +328,7 @@ export function buildMermaidPre(doc, source) {
  * attribute on the SVG or an ancestor, then a nearby `code.language-mermaid`
  * element in the same container, then anywhere in the document.
  */
-export function extractMermaidSourceFromSvg(svgElement) {
+export function extractMermaidSourceFromSvg(svgElement: Element | null): string {
     if (!svgElement) return '';
 
     const attrCandidates = ['data-source', 'data-mermaid', 'data-diagram', 'data-graph', 'data-code'];
@@ -343,7 +364,7 @@ export function extractMermaidSourceFromSvg(svgElement) {
             if (!el) continue;
             if (el === svgElement) continue;
             if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
-            const text = (el.innerText ?? el.textContent ?? '').trim();
+            const text = (innerTextOf(el) ?? el.textContent ?? '').trim();
             if (text) return text;
         }
     }
@@ -354,7 +375,7 @@ export function extractMermaidSourceFromSvg(svgElement) {
             const el = doc.querySelector(sel);
             if (!el) continue;
             if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
-            const text = (el.innerText ?? el.textContent ?? '').trim();
+            const text = (innerTextOf(el) ?? el.textContent ?? '').trim();
             if (text) return text;
         }
     }
@@ -367,7 +388,11 @@ export function extractMermaidSourceFromSvg(svgElement) {
  * source was recovered, pair them by diagram type (graph/state/sequence)
  * in document order.
  */
-export function pickMermaidSourceForSvg(svgElement, sources, startIndex) {
+export function pickMermaidSourceForSvg(
+    svgElement: Element,
+    sources: string[],
+    startIndex: number
+): { source: string; nextIndex: number; used: boolean } {
     const className = (svgElement?.getAttribute?.('class') || '').toLowerCase();
     const roleDesc = (svgElement?.getAttribute?.('aria-roledescription') || '').toLowerCase();
 
@@ -376,8 +401,8 @@ export function pickMermaidSourceForSvg(svgElement, sources, startIndex) {
     if (className.includes('sequencediagram') || roleDesc.includes('sequence')) expected = 'sequence';
     if (className.includes('flowchart') || roleDesc.includes('flowchart')) expected = 'graph';
 
-    const matchesType = (src) => {
-        const first = (src || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
+    const matchesType = (src: string) => {
+        const first = (src || '').split(/\r?\n/).map((l: string) => l.trim()).find(Boolean) || '';
         const lower = first.toLowerCase();
         if (expected === 'state') return lower.startsWith('statediagram');
         if (expected === 'sequence') return lower.startsWith('sequencediagram');
@@ -400,18 +425,40 @@ export function pickMermaidSourceForSvg(svgElement, sources, startIndex) {
 /*  Extraction context                                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * @typedef {object} MermaidContext
- * @property {string[]} sources     every ` ```mermaid ` source found on the page
- * @property {Set<string>} consumed  sources already placed in the output
- * @property {Set<string>} used     sources represented in the output (incl. injected)
- */
+export interface MermaidContext {
+    sources: string[];
+    consumed: Set<string>;
+    used: Set<string>;
+}
+
+export interface MermaidRanked extends MermaidScore {
+    source: string;
+}
+
+export interface MermaidScore {
+    score: number;
+    hits: number;
+    labelScore?: number;
+    labelHits?: number;
+    tokenScore?: number;
+    tokenHits?: number;
+}
+
+export interface MermaidStats {
+    svgSeen: number;
+    svgReplaced: number;
+    svgEmbedded: number;
+    svgPlaceholder: number;
+    garbageRecovered: number;
+    garbagePlaceholders: number;
+    sourcesUsed: number;
+}
 
 /**
  * @param {string} pageHtml raw HTML of the page (may embed script payloads)
  * @returns {MermaidContext}
  */
-export function createMermaidContext(pageHtml) {
+export function createMermaidContext(pageHtml: string): MermaidContext {
     return {
         sources: collectMermaidSources(pageHtml),
         consumed: new Set(),
@@ -431,7 +478,7 @@ export function createMermaidContext(pageHtml) {
  * @param {MermaidContext} ctx
  * @returns {object} stats
  */
-export function applyMermaidToDoc(doc, ctx) {
+export function applyMermaidToDoc(doc: Document, ctx: MermaidContext): MermaidStats {
     const stats = {
         svgSeen: 0,
         svgReplaced: 0,
@@ -546,7 +593,15 @@ export function applyMermaidToDoc(doc, ctx) {
  * @param {MermaidContext} options.ctx
  * @returns {object} stats
  */
-export function rescueMissingDiagrams({ liveDoc, selectionDoc, ctx }) {
+export function rescueMissingDiagrams({
+    liveDoc,
+    selectionDoc,
+    ctx
+}: {
+    liveDoc: Document | null;
+    selectionDoc: Document;
+    ctx: MermaidContext;
+}): { inspected: number; injected: number } {
     const stats = { inspected: 0, injected: 0 };
     if (!liveDoc || !selectionDoc) return stats;
 
@@ -598,15 +653,15 @@ export function rescueMissingDiagrams({ liveDoc, selectionDoc, ctx }) {
     return stats;
 }
 
-function normalizeHeadingText(text) {
+function normalizeHeadingText(text: string): string {
     return (text || '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
  * The nearest heading above `element` in the live page.
  */
-function findAnchorHeading(element) {
-    let node = element;
+function findAnchorHeading(element: Element): Element | null {
+    let node: Element | null = element;
     while (node && node.nodeType === 1) {
         let sibling = node.previousElementSibling;
         while (sibling) {
@@ -620,7 +675,7 @@ function findAnchorHeading(element) {
     return null;
 }
 
-function findHeadingInSelection(body, normalizedText) {
+function findHeadingInSelection(body: Element, normalizedText: string): Element | null {
     for (const heading of Array.from(body.querySelectorAll('h1, h2, h3, h4, h5, h6'))) {
         if (normalizeHeadingText(heading.textContent || '') === normalizedText) return heading;
     }

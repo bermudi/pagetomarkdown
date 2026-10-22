@@ -56,7 +56,21 @@ const EMPTIABLE_SELECTOR = 'li, ul, ol, i, span, p, div, form, section, aside';
 const CONTENT_BEARING_SELECTOR =
     'img, svg, video, audio, iframe, canvas, object, embed, pre, code, table, figure, math, mjx-container, input, select, textarea, hr';
 
-export function pruneNoiseElements(root, log = () => {}) {
+export interface NoiseCounts {
+    hidden: number;
+    ariaHidden: number;
+    skipLinks: number;
+    templates: number;
+    trackers: number;
+    shareWidgets: number;
+    shareLinks: number;
+    emptied: number;
+}
+
+export function pruneNoiseElements(
+    root: Element | null,
+    log: (...args: unknown[]) => void = () => {}
+): NoiseCounts {
         const emptyCounts = {
             hidden: 0,
             ariaHidden: 0,
@@ -74,8 +88,8 @@ export function pruneNoiseElements(root, log = () => {}) {
         // would destroy math. The check walks all ancestors because real math
         // trees nest aria-hidden spans with generic classes.
         const mathish = /(^|[\s_-])(katex|mathjax|mjx|latex|math)([\s_-]|$)/i;
-        const isMathSubtree = (el) => {
-            for (let anc = el; anc && anc !== root; anc = anc.parentElement) {
+        const isMathSubtree = (el: Element) => {
+            for (let anc: Element | null = el; anc && anc !== root; anc = anc.parentElement) {
                 if (mathish.test(anc.getAttribute?.('class') || '')) return true;
                 if (/^mjx-/i.test(anc.tagName || '')) return true;
             }

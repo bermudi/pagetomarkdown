@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { Window } from 'happy-dom';
 import { preserveActiveTabs } from './tabState.js';
 
-function createDocument(html) {
+function createDocument(html: string): Document {
     const window = new Window();
     window.document.body.innerHTML = html;
-    return window.document;
+    // happy-dom's Document is not the DOM lib's Document, structurally.
+    return window.document as unknown as Document;
 }
 
 describe('tabState', () => {

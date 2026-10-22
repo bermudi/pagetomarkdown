@@ -19,7 +19,7 @@ import { AdvancedMarkdownConverter } from './content.js';
 const FIXTURE_DIR = resolve('tests/fixtures/pipeline');
 const UPDATE_GOLDEN = process.env.UPDATE_GOLDEN === '1';
 
-const readFixture = (name) => readFileSync(resolve(FIXTURE_DIR, name), 'utf8');
+const readFixture = (name: string) => readFileSync(resolve(FIXTURE_DIR, name), 'utf8');
 
 /**
  * Golden-file harness for the core conversion pipeline.
@@ -30,9 +30,13 @@ const readFixture = (name) => readFileSync(resolve(FIXTURE_DIR, name), 'utf8');
  * element defuddle picks depends on layout metrics that happy-dom does
  * not have.
  */
-function runFixture(converter, { file, url, mode }) {
+function runFixture(converter: AdvancedMarkdownConverter, { file, url, mode }: {
+    file: string;
+    url: string;
+    mode: 'page' | 'content';
+}): string {
   const html = readFixture(file);
-  window.happyDOM.setURL(url);
+  window.happyDOM?.setURL(url);
   document.body.innerHTML = html;
 
   if (mode === 'content') {
@@ -49,7 +53,7 @@ function runFixture(converter, { file, url, mode }) {
   return converter.convertToMarkdown(content);
 }
 
-function expectGolden(name, actual) {
+function expectGolden(name: string, actual: string): void {
   const goldenPath = resolve(FIXTURE_DIR, `${name}.expected.md`);
   if (UPDATE_GOLDEN) {
     writeFileSync(goldenPath, actual.endsWith('\n') ? actual : `${actual}\n`);
@@ -60,7 +64,7 @@ function expectGolden(name, actual) {
 }
 
 describe('core conversion pipeline (golden files)', () => {
-  let converter;
+  let converter: AdvancedMarkdownConverter;
 
   beforeAll(() => {
     converter = new AdvancedMarkdownConverter();

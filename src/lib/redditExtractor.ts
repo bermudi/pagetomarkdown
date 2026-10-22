@@ -1,11 +1,16 @@
 const REDDIT_HOST_PATTERN = /(^|\.)reddit\.com$/i;
 
-function getLocation(doc) {
+function getLocation(doc: Document): Location | null {
     const win = doc?.defaultView ?? (typeof window !== 'undefined' ? window : null);
     return win?.location ?? null;
 }
 
-export function isRedditThreadPage(doc = document) {
+export interface RedditThread {
+    article: HTMLElement;
+    metadataOverrides: Record<string, unknown>;
+}
+
+export function isRedditThreadPage(doc: Document = document): boolean {
     const location = getLocation(doc);
     if (!location) return false;
     const host = location.hostname || '';
@@ -14,7 +19,7 @@ export function isRedditThreadPage(doc = document) {
     return /\/comments\//.test(path);
 }
 
-export function extractRedditThread(doc = document) {
+export function extractRedditThread(doc: Document = document): RedditThread | null {
     if (!isRedditThreadPage(doc)) {
         return null;
     }
@@ -97,7 +102,7 @@ export function extractRedditThread(doc = document) {
     }
 }
 
-function buildRedditCommentsList(doc, sitetable, depth) {
+function buildRedditCommentsList(doc: Document, sitetable: Element | null, depth: number): Element | null {
     if (!sitetable) return null;
 
     const commentNodes = Array.from(sitetable.children).filter((node) =>

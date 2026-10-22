@@ -6,7 +6,7 @@ export default defineConfig(({ mode }) => ({
         emptyOutDir: false,
         sourcemap: mode !== 'production',
         lib: {
-            entry: 'src/content.js',
+            entry: 'src/content.ts',
             name: 'PageToMarkdownContent',
             formats: ['iife'],
             fileName: () => 'content.js'

@@ -17,7 +17,7 @@ import {
     sourceExplainsLabels
 } from './mermaid.js';
 
-const parse = (html) => new DOMParser().parseFromString(html, 'text/html');
+const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 
 describe('collectMermaidSources', () => {
     it('finds plain fences', () => {

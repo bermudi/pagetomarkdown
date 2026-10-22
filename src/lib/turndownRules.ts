@@ -8,17 +8,26 @@
  */
 
 import TurndownService from 'turndown';
+import type { Rule } from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 
 import { computeFence, detectLanguage } from './codeBlocks.js';
 
+export interface ConversionOptions {
+    stripLinks: boolean;
+    stripImages: boolean;
+}
+
+export interface TurndownServiceOptions {
+    getOptions: () => ConversionOptions;
+    log?: (...args: unknown[]) => void;
+}
+
 /**
- * @param {object} options
- * @param {() => {stripLinks: boolean, stripImages: boolean}} options.getOptions
- * @param {(...args: unknown[]) => void} [options.log]
+ * @param {TurndownServiceOptions} options
  * @returns {TurndownService}
  */
-export function createTurndownService({ getOptions, log = () => {} }) {
+export function createTurndownService({ getOptions, log = () => {} }: TurndownServiceOptions): TurndownService {
     const turndown = new TurndownService({
         headingStyle: 'atx',
         hr: '---',
@@ -40,7 +49,10 @@ export function createTurndownService({ getOptions, log = () => {} }) {
     return turndown;
 }
 
-function addCustomRules(turndown, { getOptions, log }) {
+function addCustomRules(
+    turndown: TurndownService,
+    { getOptions, log }: Required<TurndownServiceOptions>
+): void {
     turndown.addRule('stripLinks', {
         filter: (node) => getOptions().stripLinks && node.nodeName === 'A',
         replacement: (content) => content
@@ -49,7 +61,7 @@ function addCustomRules(turndown, { getOptions, log }) {
     turndown.addRule('stripImages', {
         filter: (node) => getOptions().stripImages && node.nodeName === 'IMG',
         replacement: (_content, node) => {
-            const alt = (node.getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
+            const alt = ((node as HTMLElement).getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
             if (!alt) return '';
             return `(Image: ${alt})`;
         }
@@ -65,7 +77,7 @@ function addCustomRules(turndown, { getOptions, log }) {
         },
         replacement: (_content, node) => {
             log('preformattedCode: replacement called');
-            const codeElement = node.querySelector('code');
+            const codeElement = (node as Element).querySelector('code');
             const language = codeElement ? detectLanguage(codeElement) : '';
             const code = (codeElement?.textContent ?? node.textContent ?? '').trim();
 
@@ -102,7 +114,7 @@ function addCustomRules(turndown, { getOptions, log }) {
         replacement: (_content, node) => {
             const level = Number.parseInt(node.nodeName.substring(1), 10);
             const hashes = '#'.repeat(level);
-            const text = node.textContent.trim();
+            const text = (node.textContent || '').trim();
             return `\n\n${hashes} ${text}\n\n`;
         }
     });
@@ -110,11 +122,11 @@ function addCustomRules(turndown, { getOptions, log }) {
     turndown.addRule('headingLinks', {
         filter: (node) => {
             if (/^H[1-6]$/.test(node.nodeName)) {
-                const anchors = Array.from(node.querySelectorAll(':scope > a'));
+                const anchors = Array.from((node as Element).querySelectorAll(':scope > a'));
                 if (anchors.length === 1) return true;
 
                 const nonWhitespaceChildren = Array.from(node.childNodes).filter(
-                    (n) => !(n.nodeType === Node.TEXT_NODE && !n.textContent.trim())
+                    (n: Node) => !(n.nodeType === Node.TEXT_NODE && !(n.textContent || '').trim())
                 );
                 if (nonWhitespaceChildren.length === 1 && nonWhitespaceChildren[0].nodeName === 'A') {
                     return true;
@@ -125,7 +137,7 @@ function addCustomRules(turndown, { getOptions, log }) {
         replacement: (_content, node) => {
             const level = Number.parseInt(node.nodeName.substring(1), 10);
             const hashes = '#'.repeat(level);
-            const text = node.textContent.trim();
+            const text = (node.textContent || '').trim();
             return `\n\n${hashes} ${text}\n\n`;
         }
     });
@@ -148,8 +160,9 @@ function addCustomRules(turndown, { getOptions, log }) {
     turndown.addRule('figure', {
         filter: 'figure',
         replacement: (content, node) => {
-            const img = node.querySelector('img');
-            const caption = node.querySelector('figcaption');
+            const element = node as Element;
+            const img = element.querySelector('img');
+            const caption = element.querySelector('figcaption');
 
             let markdown = '';
             if (img) {
@@ -186,9 +199,11 @@ function addCustomRules(turndown, { getOptions, log }) {
 /**
  * Move a rule to the front of the list — turndown evaluates rules in order.
  */
-function prioritizeRule(turndown, name) {
+function prioritizeRule(turndown: TurndownService, name: string): void {
     const rulesArray = turndown.rules.array;
-    const index = rulesArray.findIndex((rule) => rule.key === name);
+    // turndown adds `key` to every rule at runtime; the published types do
+    // not know about it.
+    const index = rulesArray.findIndex((rule: Rule) => (rule as Rule & { key: string }).key === name);
     if (index > 0) {
         const [rule] = rulesArray.splice(index, 1);
         rulesArray.unshift(rule);

@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { Window } from 'happy-dom';
 import { extractClaudeConversation, isClaudeConversationPage } from './claudeExtractor.js';
 
-function createDocument(html, url) {
+function createDocument(html: string, url: string): Document {
     const window = new Window();
     window.document.body.innerHTML = html;
     window.location.href = url;
-    return window.document;
+    // happy-dom's Document is not the DOM lib's Document, structurally.
+    return window.document as unknown as Document;
 }
 
 const chatUrl = 'https://claude.ai/chat/3f6ffb5d-b4db-4c83-9976-d17f65be31ef';
@@ -53,6 +54,17 @@ Prompt:</code></pre></div></div>
     <div>Write a message…</div>
 `;
 
+/**
+ * Narrow a possibly-missing value, keeping the assertion in the test.
+ */
+function expectDefined<T>(value: T | null | undefined): T {
+    expect(value).toBeDefined();
+    expect(value).not.toBeNull();
+    if (value === null || value === undefined) throw new Error('expected a value');
+    return value;
+}
+
+
 describe('claudeExtractor', () => {
     it('identifies Claude conversation pages', () => {
         expect(isClaudeConversationPage(createDocument(sampleHtml, chatUrl))).toBe(true);
@@ -71,7 +83,7 @@ describe('claudeExtractor', () => {
 
     it('extracts the full conversation in order with speaker roles', () => {
         const doc = createDocument(sampleHtml, chatUrl);
-        const result = extractClaudeConversation(doc);
+        const result = expectDefined(extractClaudeConversation(doc));
         expect(result).not.toBeNull();
 
         const sections = Array.from(
@@ -99,7 +111,7 @@ describe('claudeExtractor', () => {
 
     it('strips UI chrome, thinking summaries, and page noise', () => {
         const doc = createDocument(sampleHtml, chatUrl);
-        const result = extractClaudeConversation(doc);
+        const result = expectDefined(extractClaudeConversation(doc));
         const text = result.article.textContent || '';
 
         expect(result.article.querySelector('button, [role="toolbar"], time')).toBeNull();
@@ -121,7 +133,7 @@ describe('claudeExtractor', () => {
 
     it('provides title metadata from the chat header', () => {
         const doc = createDocument(sampleHtml, chatUrl);
-        const result = extractClaudeConversation(doc);
+        const result = expectDefined(extractClaudeConversation(doc));
         expect(result.metadataOverrides.title).toBe(
             'Prompt structure for better AI requests'
         );

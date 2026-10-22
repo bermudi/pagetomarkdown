@@ -7,7 +7,7 @@
  * put it: `data-lang`, `data-language`, `language-*`, `lang-*`, on the
  * element itself or on its `pre` parent.
  */
-export function detectLanguageForPre(pre) {
+export function detectLanguageForPre(pre: Element): string {
     const codeElement = pre.querySelector('code');
     if (codeElement) {
         return detectLanguage(codeElement);
@@ -26,7 +26,7 @@ export function detectLanguageForPre(pre) {
 /**
  * The language of a `code` element — or of the `pre` that wraps it.
  */
-export function detectLanguage(codeElement) {
+export function detectLanguage(codeElement: Element): string {
     let lang = codeElement.getAttribute('data-lang');
     if (lang) return lang;
 
@@ -56,8 +56,8 @@ export function detectLanguage(codeElement) {
 /**
  * A fence long enough to hold the code it wraps.
  */
-export function computeFence(code) {
+export function computeFence(code: string): string {
     const matches = code.match(/`+/g) || [];
-    const max = matches.reduce((acc, m) => Math.max(acc, m.length), 0);
+    const max = matches.reduce((acc: number, m: string) => Math.max(acc, m.length), 0);
     return '`'.repeat(Math.max(3, max + 1));
 }

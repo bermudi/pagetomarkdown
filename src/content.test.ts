@@ -17,7 +17,7 @@ import { computeFence, detectLanguage } from './lib/codeBlocks';
 import { pruneNoiseElements } from './lib/noise';
 
 describe('AdvancedMarkdownConverter - core pipeline', () => {
-  let converter;
+  let converter: AdvancedMarkdownConverter;
 
   beforeAll(() => {
     // Ensure DOM globals are available (vitest happy-dom provides them, but double-check)
@@ -161,7 +161,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       '#mermaid-ab12 .edgePath .path{stroke:#666;}' +
       'RuntimeCoreClientAppServerProcess';
 
-    const withBodyHtml = (html, fn) => {
+    const withBodyHtml = (html: string, fn: () => void) => {
       Object.defineProperty(document.body, 'innerHTML', {
         value: html,
         configurable: true,
@@ -170,7 +170,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       try {
         fn();
       } finally {
-        delete document.body.innerHTML;
+        delete (document.body as { innerHTML?: string }).innerHTML;
       }
     };
 
@@ -223,7 +223,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
   });
 
   describe('post-defuddle-0.19 fallback guards', () => {
-    const fragment = (html) => {
+    const fragment = (html: string) => {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       return doc.body;
     };
@@ -439,7 +439,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
         const originalTitle = document.title;
         const originalUrl = window.location.href;
         try {
-          window.happyDOM.setURL(
+          window.happyDOM?.setURL(
             'https://claude.ai/chat/3f6ffb5d-b4db-4c83-9976-d17f65be31ef'
           );
           document.title = 'Prompt structure for better AI requests - Claude';
@@ -476,7 +476,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           expect(text).not.toContain('Write a message');
           expect(result.element.querySelectorAll('section[data-speaker-role]').length).toBe(2);
         } finally {
-          window.happyDOM.setURL(originalUrl);
+          window.happyDOM?.setURL(originalUrl);
           document.body.innerHTML = originalBody;
           document.title = originalTitle;
         }

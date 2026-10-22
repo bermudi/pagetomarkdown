@@ -9,7 +9,8 @@
     "clean": "rm -rf dist",
     "sync-manifest": "node scripts/sync-manifest.mjs",
     "test": "vitest run",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "defuddle": "^0.19.2",
@@ -18,10 +19,15 @@
     "webextension-polyfill": "^0.12.0"
   },
   "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.1",
+    "@types/node": "^26.6.5",
+    "@types/turndown": "^5.0.6",
     "concurrently": "^10.0.4",
     "eslint": "^10.8.1",
     "happy-dom": "^20.11.2",
     "rollup": "^4.59.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.0",
     "vite": "^7.3.5",
     "vitest": "^4.1.11"
   }

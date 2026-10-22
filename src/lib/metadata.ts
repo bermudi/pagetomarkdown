@@ -5,19 +5,48 @@
  * count, which must describe what we actually ship.
  */
 
-function getMeta(doc, names) {
+export interface PageMetadata {
+    title: string;
+    url: string;
+    domain: string;
+    source: string;
+    description: string | null;
+    author: string | null;
+    publishedDate: string | null;
+    tags: string[];
+    wordCount: number;
+    readingTime: number;
+    [key: string]: unknown;
+}
+
+/** The parts of defuddle's result this module reads. */
+export interface DefuddleMetadata {
+    title?: string;
+    domain?: string;
+    siteName?: string;
+    site?: string;
+    publication?: string;
+    description?: string;
+    author?: string;
+    published?: string;
+    wordCount?: number;
+}
+
+function getMeta(doc: Document | null, names: string[]): string | null {
+    if (!doc) return null;
     for (const name of names) {
-        const el = doc.querySelector(`meta[name="${name}"], meta[property="${name}"]`);
+        const el = doc.querySelector<HTMLMetaElement>(`meta[name="${name}"], meta[property="${name}"]`);
         if (el && el.content) return el.content.trim();
     }
     return null;
 }
 
-function extractTags(doc) {
-    const tags = new Set();
-    const keywords = doc.querySelector('meta[name="keywords"]');
+function extractTags(doc: Document | null): string[] {
+    if (!doc) return [];
+    const tags = new Set<string>();
+    const keywords = doc.querySelector<HTMLMetaElement>('meta[name="keywords"]');
     if (keywords && keywords.content) {
-        keywords.content.split(',').forEach((t) => tags.add(t.trim()));
+        keywords.content.split(',').forEach((t: string) => tags.add(t.trim()));
     }
 
     doc.querySelectorAll('.tags a, a[rel="tag"]').forEach((el) => {
@@ -41,7 +70,13 @@ export function extractMetadata({
     overrides = null,
     doc = typeof document !== 'undefined' ? document : null,
     location = typeof window !== 'undefined' ? window.location : null
-} = {}) {
+}: {
+    content?: { element?: Element | null; kind?: string; wordCount?: number };
+    defuddleResult?: DefuddleMetadata | null;
+    overrides?: Record<string, unknown> | null;
+    doc?: Document | null;
+    location?: Location | null;
+} = {}): PageMetadata {
     const def = defuddleResult;
 
     const titleFromMeta = getMeta(doc, ['og:title', 'twitter:title']);
@@ -50,7 +85,7 @@ export function extractMetadata({
     const authorFromMeta = getMeta(doc, ['author', 'article:author', 'twitter:creator']);
     const hostname = location?.hostname || '';
 
-    const metadata = {
+    const metadata: PageMetadata = {
         title: def?.title || titleFromMeta || doc?.title || 'Untitled',
         url: location?.href || '',
         domain: def?.domain || hostname.replace('www.', ''),
@@ -76,11 +111,13 @@ export function extractMetadata({
     // body ourselves.
     const element = content?.element || doc?.body;
     const text = (element?.textContent || '') || '';
-    metadata.wordCount = Number.isFinite(content?.wordCount)
-        ? content.wordCount
-        : text.trim()
-          ? text.trim().split(/\s+/).length
-          : 0;
+    const shippedCount = content?.wordCount;
+    metadata.wordCount =
+        typeof shippedCount === 'number' && Number.isFinite(shippedCount)
+            ? shippedCount
+            : text.trim()
+              ? text.trim().split(/\s+/).length
+              : 0;
     metadata.readingTime = Math.ceil(metadata.wordCount / 200);
 
     if (overrides) {

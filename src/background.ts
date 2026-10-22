@@ -1,5 +1,9 @@
 import browser from 'webextension-polyfill';
 
+import type { PageMetadata } from './lib/metadata';
+import type { ConversionOptions } from './lib/turndownRules';
+import { isDownloadRequest } from './lib/protocol';
+
 export class MarkdownDownloader {
     constructor() {
         this.setupEventListeners();
@@ -20,7 +24,7 @@ export class MarkdownDownloader {
         if (menus?.create && menus?.onClicked) {
             // Non-persistent MV2 background re-runs on every wake while the
             // menu items persist, so duplicate-id failures are harmless.
-            const create = (props) =>
+            const create = (props: Parameters<typeof browser.contextMenus.create>[0]) =>
                 Promise.resolve(menus.create(props)).catch(() => {});
             void create({
                 id: 'save-page-as-markdown',
@@ -54,7 +58,7 @@ export class MarkdownDownloader {
         }
     }
 
-    async handleIconClick(tab, onClickData) {
+    async handleIconClick(tab: browser.tabs.Tab, onClickData?: browser.browserAction.OnClickData) {
         const modifiers = onClickData?.modifiers ?? [];
         const shiftHeld = Array.isArray(modifiers) && modifiers.includes('Shift');
         const defaultStripLinks = await this.getDefaultStripLinks();
@@ -63,19 +67,20 @@ export class MarkdownDownloader {
         await this.sendConversion(tab, { stripLinks, stripImages: stripLinks });
     }
 
-    async sendConversion(tab, { stripLinks, stripImages }) {
+    async sendConversion(tab: browser.tabs.Tab, { stripLinks, stripImages }: ConversionOptions) {
+        if (tab.id == null) return;
         await browser.tabs
             .sendMessage(tab.id, {
                 action: 'trigger_conversion',
                 options: { stripLinks, stripImages }
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
                 console.error('Could not send message to content script. Try reloading the page.', err);
             });
     }
 
-    handleMessage(message) {
-        if (message?.type !== 'DOWNLOAD_MARKDOWN') return;
+    handleMessage(message: unknown) {
+        if (!isDownloadRequest(message)) return;
 
         return this.downloadMarkdown(message.data)
             .then(() => ({ success: true }))
@@ -85,7 +90,11 @@ export class MarkdownDownloader {
             });
     }
 
-    async downloadMarkdown({ markdown, metadata, options }) {
+    async downloadMarkdown({ markdown, metadata, options }: {
+        markdown: string;
+        metadata: Partial<PageMetadata>;
+        options: Partial<ConversionOptions>;
+    }): Promise<void> {
         const filename = this.generateFilename(metadata);
         const frontmatter = this.generateFrontmatter(metadata, options);
         const title = metadata?.title ? String(metadata.title).trim() : '';
@@ -109,11 +118,12 @@ export class MarkdownDownloader {
 
             setTimeout(() => URL.revokeObjectURL(url), 10_000);
         } catch (error) {
-            throw new Error(`Download failed: ${error?.message ?? String(error)}`);
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`Download failed: ${message}`);
         }
     }
 
-    generateFilename(metadata) {
+    generateFilename(metadata: Partial<PageMetadata>): string {
         const title = metadata?.title || 'untitled';
         const domain = metadata?.domain || 'web-clipper';
 
@@ -126,9 +136,9 @@ export class MarkdownDownloader {
         return `${sanitizedTitle} - ${domain}.md`;
     }
 
-    generateFrontmatter(metadata, options) {
+    generateFrontmatter(metadata: Partial<PageMetadata>, options?: Partial<ConversionOptions>): string {
         const llmMode = !!options?.stripLinks;
-        const frontmatter = {
+        const frontmatter: Record<string, unknown> = {
             title: metadata?.title,
             author: metadata?.author,
             source: metadata?.source,

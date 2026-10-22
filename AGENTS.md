@@ -173,9 +173,15 @@ script → file on disk.
   loaded add-on reports the in-repo manifest version — it is kept in sync
   with `package.json` by `pnpm run sync-manifest` (CI fails on drift), so
   "Temporary Extension" is the only tell that you are not on the AMO copy.
-- `pnpm lint && pnpm test && pnpm build` must pass before commits;
-  `eslint.config.js` lists browser globals explicitly (add new ones there).
-  Test files run in Node, so they get their own globals block there.
+- `pnpm lint && pnpm test && pnpm run typecheck && pnpm build` must pass before
+  commits; `eslint.config.js` lists browser globals explicitly (add new ones
+  there). Test files run in Node, so they get their own globals block there.
+- The project is TypeScript (strict) since 2026-10-22. `typescript-eslint`
+  does not support TypeScript 7 yet — the pinned major is **6**.
+  `src/types/` holds hand-written declarations for the two packages that
+  ship none (`webextension-polyfill`, `turndown-plugin-gfm`).
+- `globalThis.__vitest_worker__` and `window.happyDOM` are declared in
+  `src/types/globals.d.ts`.
 - `tools/fix_deepwiki.py` is **gone** (2026-10-22): the DeepWiki repairs moved
   into the extension (mermaid recovery, compressed-table repair, no more
   broken `data:image/svg+xml` diagrams). Git history keeps it for old files.

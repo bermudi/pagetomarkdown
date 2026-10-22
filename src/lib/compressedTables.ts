@@ -18,16 +18,22 @@
 
 const SEPARATOR_CELL = /^:?-{2,}:?$/;
 
+export interface CompressedTable {
+    heading: { level: number; text: string } | null;
+    header: string[];
+    rows: string[][];
+}
+
 /**
  * @param {string} text
  * @returns {{heading: {level: number, text: string} | null, header: string[], rows: string[][]} | null}
  */
-export function parseCompressedTable(text) {
+export function parseCompressedTable(text: string): CompressedTable | null {
     if (!text || !text.includes('||')) return null;
 
     const lines = text
         .split('\n')
-        .map((line) => line.trim())
+        .map((line: string) => line.trim())
         .filter(Boolean);
     if (lines.length === 0) return null;
 
@@ -42,7 +48,7 @@ export function parseCompressedTable(text) {
     const chunks = body
         .join('\n')
         .split('||')
-        .map((chunk) => chunk.replace(/\n/g, ' ').trim())
+        .map((chunk: string) => chunk.replace(/\n/g, ' ').trim())
         .filter(Boolean);
     if (chunks.length < 2) return null;
 
@@ -50,15 +56,15 @@ export function parseCompressedTable(text) {
         let cell = chunk.trim();
         if (cell.startsWith('|')) cell = cell.slice(1);
         if (cell.endsWith('|')) cell = cell.slice(0, -1);
-        return cell.split('|').map((value) => value.trim());
+        return cell.split('|').map((value: string) => value.trim());
     });
 
     const width = rows[0].length;
     if (width < 2) return null;
-    if (!rows.every((row) => row.length === width)) return null;
+    if (!rows.every((row: string[]) => row.length === width)) return null;
 
     const separator = rows[1];
-    if (!separator || !separator.every((cell) => SEPARATOR_CELL.test(cell))) return null;
+    if (!separator || !separator.every((cell: string) => SEPARATOR_CELL.test(cell))) return null;
 
     return { heading, header: rows[0], rows: rows.slice(2) };
 }
@@ -69,7 +75,7 @@ export function parseCompressedTable(text) {
  * @param {Document} doc
  * @param {{heading: object | null, header: string[], rows: string[][]}} table
  */
-export function buildTableElement(doc, table) {
+export function buildTableElement(doc: Document, table: CompressedTable): DocumentFragment {
     const fragment = doc.createDocumentFragment();
 
     if (table.heading) {

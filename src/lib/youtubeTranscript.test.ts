@@ -16,9 +16,9 @@ import {
     parseTranscriptFromPanelContent
 } from './youtubeTranscript.js';
 
-const VIDEO_URL = (id) => `https://www.youtube.com/api/timedtext?v=${id}&lang=en&signature=abc`;
+const VIDEO_URL = (id: string) => `https://www.youtube.com/api/timedtext?v=${id}&lang=en&signature=abc`;
 
-function makePanelWithSegments(cues) {
+function makePanelWithSegments(cues: { ts: string; text: string }[]): HTMLElement {
     const panel = document.createElement('ytd-transcript-body-renderer');
     for (const { ts, text } of cues) {
         const seg = document.createElement('ytd-transcript-segment-renderer');
@@ -172,7 +172,7 @@ describe('openTranscriptPanelAndScrape', () => {
         vi.useRealTimers();
     });
 
-    function setupPage({ segments }) {
+    function setupPage({ segments }: { segments: { ts: string; text: string }[] | null }): { expander: HTMLDivElement; panel: HTMLElement } {
         // Collapsed description with expand/collapse buttons
         const expander = document.createElement('div');
         expander.id = 'description-inline-expander';
@@ -215,7 +215,7 @@ describe('openTranscriptPanelAndScrape', () => {
         return { expander, panel };
     }
 
-    function makeSegmentsIn(body, cues) {
+    function makeSegmentsIn(body: HTMLElement, cues: { ts: string; text: string }[]): void {
         for (const { ts, text } of cues) {
             const seg = document.createElement('ytd-transcript-segment-renderer');
             const tsEl = document.createElement('div');
@@ -251,7 +251,10 @@ describe('openTranscriptPanelAndScrape', () => {
     it('leaves an already-open panel open', async () => {
         const { panel } = setupPage({ segments: [{ ts: '0:01', text: 'Cue' }] });
         panel.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
-        makeSegmentsIn(panel.querySelector('ytd-transcript-body-renderer'), [{ ts: '0:01', text: 'Cue' }]);
+        makeSegmentsIn(
+            panel.querySelector('ytd-transcript-body-renderer') as HTMLElement,
+            [{ ts: '0:01', text: 'Cue' }]
+        );
 
         const promise = openTranscriptPanelAndScrape();
         await vi.advanceTimersByTimeAsync(2000);

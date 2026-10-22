@@ -5,12 +5,17 @@ const POE_HOST_PATTERN = /(^|\.)poe\.com$/i;
 // the generic defuddle path takes over.
 const MESSAGE_SELECTOR = '[id^="message-"].ChatMessage_chatMessage__xkgHx';
 
-function getLocation(doc) {
+function getLocation(doc: Document): Location | null {
     const win = doc?.defaultView ?? (typeof window !== 'undefined' ? window : null);
     return win?.location ?? null;
 }
 
-export function isPoeConversationPage(doc = document) {
+export interface PoeConversation {
+    article: HTMLElement;
+    metadataOverrides: Record<string, unknown>;
+}
+
+export function isPoeConversationPage(doc: Document = document): boolean {
     const location = getLocation(doc);
     if (!location) return false;
     if (!POE_HOST_PATTERN.test(location.hostname || '')) return false;
@@ -23,7 +28,7 @@ export function isPoeConversationPage(doc = document) {
  * @param {Document} doc
  * @returns {{article: HTMLElement, metadataOverrides: object} | null}
  */
-export function extractPoeConversation(doc = document) {
+export function extractPoeConversation(doc: Document = document): PoeConversation | null {
     try {
         if (!isPoeConversationPage(doc)) return null;
 
@@ -68,7 +73,7 @@ export function extractPoeConversation(doc = document) {
     }
 }
 
-function buildPoeMessageSection(doc, messageNode) {
+function buildPoeMessageSection(doc: Document, messageNode: Element): Element | null {
     const wrapper = messageNode.querySelector('.ChatMessage_messageWrapper__4Ugd6');
     const isUser = wrapper?.classList?.contains('ChatMessage_rightSideMessageWrapper__r0roB') ?? false;
     const role = isUser ? 'user' : 'assistant';
@@ -97,7 +102,7 @@ function buildPoeMessageSection(doc, messageNode) {
     section.appendChild(heading);
 
     if (contentNode) {
-        const clonedContent = contentNode.cloneNode(true);
+        const clonedContent = contentNode.cloneNode(true) as Element;
         stripPoeUiElements(clonedContent);
         section.appendChild(clonedContent);
     }
@@ -117,7 +122,7 @@ function buildPoeMessageSection(doc, messageNode) {
     return section;
 }
 
-function extractPoeSpeakerName(messageNode, role) {
+function extractPoeSpeakerName(messageNode: Element, role: string): string {
     if (role === 'user') {
         return 'You';
     }
@@ -132,7 +137,7 @@ function extractPoeSpeakerName(messageNode, role) {
     return 'Assistant';
 }
 
-function extractPoeMessageTimestamp(messageNode) {
+function extractPoeMessageTimestamp(messageNode: Element): string {
     const metaTexts = Array.from(
         messageNode.querySelectorAll('.Message_messageMetadataText__FxY5_')
     )
@@ -147,7 +152,7 @@ function extractPoeMessageTimestamp(messageNode) {
     return candidate;
 }
 
-function stripPoeUiElements(node) {
+function stripPoeUiElements(node: Element): void {
     node.querySelectorAll('.MessageOverflowActions_overflowActionsWrapper__uC5oj').forEach((el) =>
         el.remove()
     );

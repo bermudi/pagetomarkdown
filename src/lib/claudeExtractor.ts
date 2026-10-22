@@ -1,11 +1,16 @@
 const CLAUDE_HOST_PATTERN = /(^|\.)claude\.ai$|(^|\.)claude\.com$/i;
 
-function getLocation(doc) {
+function getLocation(doc: Document): Location | null {
     const win = doc?.defaultView ?? (typeof window !== 'undefined' ? window : null);
     return win?.location ?? null;
 }
 
-export function isClaudeConversationPage(doc = document) {
+export interface ClaudeConversation {
+    article: HTMLElement;
+    metadataOverrides: Record<string, unknown>;
+}
+
+export function isClaudeConversationPage(doc: Document = document): boolean {
     const location = getLocation(doc);
     if (!location) return false;
     const host = location.hostname || '';
@@ -17,7 +22,7 @@ export function isClaudeConversationPage(doc = document) {
     );
 }
 
-export function extractClaudeConversation(doc = document) {
+export function extractClaudeConversation(doc: Document = document): ClaudeConversation | null {
     if (!isClaudeConversationPage(doc)) {
         return null;
     }
@@ -61,7 +66,7 @@ export function extractClaudeConversation(doc = document) {
     }
 }
 
-function buildClaudeMessageSection(doc, row) {
+function buildClaudeMessageSection(doc: Document, row: Element): Element | null {
     const role = detectClaudeRole(row);
     const contentNode = findClaudeContentNode(row, role);
     if (!contentNode) return null;
@@ -75,7 +80,7 @@ function buildClaudeMessageSection(doc, row) {
     heading.textContent = speakerName;
     section.appendChild(heading);
 
-    const clonedContent = contentNode.cloneNode(true);
+    const clonedContent = contentNode.cloneNode(true) as Element;
     stripClaudeUiElements(clonedContent);
     if (!clonedContent.textContent?.trim() && !clonedContent.querySelector('img, pre, code')) {
         return null;
@@ -93,7 +98,7 @@ function buildClaudeMessageSection(doc, row) {
     return section;
 }
 
-function detectClaudeRole(row) {
+function detectClaudeRole(row: Element): string {
     const perf = row.getAttribute?.('data-perf-row');
     if (perf === 'human') return 'user';
     if (perf === 'assistant') return 'assistant';
@@ -108,7 +113,7 @@ function detectClaudeRole(row) {
     return 'unknown';
 }
 
-function findClaudeContentNode(row, role) {
+function findClaudeContentNode(row: Element, role: string): Element | null {
     if (role === 'user') {
         return (
             row.querySelector?.('[data-testid="user-message"]') ??
@@ -124,7 +129,7 @@ function findClaudeContentNode(row, role) {
     return row.querySelector?.('div[role="article"]') ?? row;
 }
 
-function stripClaudeUiElements(node) {
+function stripClaudeUiElements(node: Element): void {
     if (!node.querySelectorAll) return;
     // Thinking summaries are process metadata, not conversation content.
     node.querySelectorAll('[data-cds="TurnStatus"]').forEach((el) => el.remove());
@@ -136,14 +141,14 @@ function stripClaudeUiElements(node) {
     node.querySelectorAll('.sr-only').forEach((el) => el.remove());
 }
 
-function extractClaudeTimestamp(row) {
+function extractClaudeTimestamp(row: Element): string {
     const time = row.querySelector?.('time[datetime]');
     const datetime = time?.getAttribute?.('datetime');
     if (datetime) return datetime;
     return time?.textContent?.trim() || '';
 }
 
-function extractClaudeTitle(doc) {
+function extractClaudeTitle(doc: Document): string {
     const labeled = doc.querySelector?.('[data-testid="chat-title-split"] [aria-label]');
     const label = labeled?.getAttribute?.('aria-label') || '';
     const rename = label.match(/^(.*?),\s*rename chat\s*$/i);
