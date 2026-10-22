@@ -30,7 +30,6 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-TEST_PAGE = "tests/fixtures/pipeline/docs-shell.html"
 
 
 def find_firefox() -> str:
@@ -195,16 +194,35 @@ def diagnose(client) -> str:
         return f"(diagnostics failed: {error})"
 
 
-CHECKS = {
-    "frontmatter present": lambda text: text.startswith("---\n"),
-    "title in frontmatter": lambda text: "title:" in text.split("---")[1] if text.startswith("---") else False,
-    "article content present": lambda text: "The widget renders interactive charts" in text,
-    "diagram recovered": lambda text: "```mermaid" in text,
-    "table rendered": lambda text: "| Option | Type | Default |" in text,
-    "code fence kept": lambda text: "```bash" in text,
-    "no page chrome": lambda text: "SIDEBAR NOISE" not in text and "HEADER CHROME" not in text,
-    "no upgrade promo": lambda text: "Upgrade to Pro" not in text,
-}
+SCENARIOS = [
+    {
+        "name": "docs page",
+        "page": "tests/fixtures/pipeline/docs-shell.html",
+        "checks": {
+            "frontmatter present": lambda text: text.startswith("---\n"),
+            "title in frontmatter": lambda text: "title:" in text.split("---")[1] if text.startswith("---") else False,
+            "article content present": lambda text: "The widget renders interactive charts" in text,
+            "diagram recovered": lambda text: "```mermaid" in text,
+            "table rendered": lambda text: "| Option | Type | Default |" in text,
+            "code fence kept": lambda text: "```bash" in text,
+            "no page chrome": lambda text: "SIDEBAR NOISE" not in text and "HEADER CHROME" not in text,
+            "no upgrade promo": lambda text: "Upgrade to Pro" not in text,
+        },
+    },
+    {
+        # The Reddit extractor must not hijack the modern UI: no old-reddit
+        # markup, so it has to step aside and let the generic pipeline run.
+        # The file must contain the post body, not just the thread title.
+        "name": "modern reddit thread",
+        "page": "tests/fixtures/pipeline/reddit-modern.html",
+        "checks": {
+            "frontmatter present": lambda text: text.startswith("---\n"),
+            "post body present": lambda text: "borrow checker is the reason" in text,
+            "comments present": lambda text: "refuses to let me write the bug" in text,
+            "not a title-only file": lambda text: len(text.strip()) > 400,
+        },
+    },
+]
 
 
 def main() -> int:
@@ -234,34 +252,47 @@ def main() -> int:
         addon = Addons(client).install(str(REPO), temp=True)
         print(f"installed {addon}")
 
-        # Content scripts are only injected into tabs opened *after* the
-        # add-on was loaded, so navigate afterwards.
-        url = f"http://127.0.0.1:{port}/{TEST_PAGE}"
-        client.navigate(url)
-        print(f"navigated to {url}")
-        time.sleep(2)
+        for scenario in SCENARIOS:
+            name = scenario["name"]
+            print(f"\n=== scenario: {name} ===")
 
-        result = click_toolbar_button(client, addon)
-        print(f"toolbar button: {result}")
-        if result != "clicked":
-            failures.append(f"could not click the toolbar button ({result})")
+            # Content scripts are only injected into tabs opened *after* the
+            # add-on was loaded, so navigate afterwards. Navigation needs the
+            # content context; the toolbar click leaves us in the chrome one.
+            client.set_context(client.CONTEXT_CONTENT)
+            url = f"http://127.0.0.1:{port}/{scenario['page']}"
+            client.navigate(url)
+            print(f"navigated to {url}")
+            time.sleep(2)
 
-        downloaded = wait_for_download(downloads)
-        if downloaded is None:
-            failures.append("no file was downloaded")
-            print(diagnose(client))
-        else:
+            # Start each scenario with an empty download directory.
+            for stale in downloads.iterdir():
+                if stale.is_file():
+                    stale.unlink()
+
+            result = click_toolbar_button(client, addon)
+            print(f"toolbar button: {result}")
+            if result != "clicked":
+                failures.append(f"{name}: could not click the toolbar button ({result})")
+                continue
+
+            downloaded = wait_for_download(downloads)
+            if downloaded is None:
+                failures.append(f"{name}: no file was downloaded")
+                print(diagnose(client))
+                continue
+
             content = downloaded.read_text(encoding="utf-8")
             print(f"downloaded {downloaded.name} ({len(content)} bytes)")
             print("---- file ----")
             print(content)
             print("---- end ----")
 
-            for name, check in CHECKS.items():
+            for check_name, check in scenario["checks"].items():
                 ok = check(content)
-                print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+                print(f"  {'PASS' if ok else 'FAIL'}  {check_name}")
                 if not ok:
-                    failures.append(name)
+                    failures.append(f"{name}: {check_name}")
     finally:
         if client is not None:
             try:

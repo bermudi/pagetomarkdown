@@ -24,10 +24,16 @@ directory (removed on success, kept for inspection on failure).
 
 ## What it checks
 
-The page is `tests/fixtures/pipeline/docs-shell.html`, served over HTTP by the
-script itself. The assertions cover the frontmatter, the article text, the
-recovered diagram, the rendered table, the kept code fence — and that no page
-chrome (sidebar, header, promo box) made it into the file.
+Two scenarios, each one a page served over HTTP by the script itself:
+
+- `tests/fixtures/pipeline/docs-shell.html` — nav chrome, sidebar, code
+  blocks, a diagram and a table. Asserts the frontmatter, the article text,
+  the recovered diagram, the rendered table, the kept code fence — and that
+  no page chrome (sidebar, header, promo box) made it into the file.
+- `tests/fixtures/pipeline/reddit-modern.html` — a stand-in for Reddit's
+  modern UI (shreddit elements, none of the old-reddit markup). The Reddit
+  extractor must step aside here: the file has to contain the post body and
+  the comments, not just the thread title.
 
 ## How it works
 

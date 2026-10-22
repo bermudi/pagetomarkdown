@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Why do you prefer Rust? : r/programming</title>
+<meta name="description" content="A modern-Reddit-style thread: shreddit elements, no old-reddit markup.">
+</head>
+<body>
+<!-- Stand-in for Reddit's modern (shreddit) UI. The exact internals do not
+     matter for what this fixture checks — only that the page has none of the
+     old-reddit selectors the extractor looks for, so the extractor must not
+     hijack it. -->
+<shreddit-app>
+  <shreddit-post post-title="Why do you prefer Rust?" author="bermudi86" subreddit-prefixed-name="r/programming" created-timestamp="2026-03-13T11:07:56.000Z">
+    <div slot="text-body">
+      <p>I keep coming back to Rust for systems work, but I am not sure I can
+      explain the pull to people who write Python all day.</p>
+      <p>The borrow checker is the reason, but the ergonomics around error
+      handling are a close second. What is it for the rest of you?</p>
+    </div>
+    <div slot="vote-button"><span>412</span></div>
+  </shreddit-post>
+
+  <shreddit-comment thingid="t1_a" author="rustacean" depth="0" score="89" created-timestamp="2026-03-13T11:20:00.000Z">
+    <div slot="comment">
+      <p>For me it is the fact that the compiler refuses to let me write the
+      bug. Every other language lets me write it and then tells me about it
+      later, at runtime, in production.</p>
+    </div>
+  </shreddit-comment>
+
+  <shreddit-comment thingid="t1_b" author="pythonista" depth="0" score="57" created-timestamp="2026-03-13T12:02:00.000Z">
+    <div slot="comment">
+      <p>Fair, but I spend more of my time fighting the borrow checker than
+      writing the actual program. YMMV.</p>
+    </div>
+  </shreddit-comment>
+</shreddit-app>
+</body>
+</html>
