@@ -31,6 +31,16 @@ export default [
     },
   },
   {
+    // Test files run in Node, not in the browser.
+    files: ['src/**/*.test.js'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        Buffer: 'readonly',
+      },
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'web-ext-artifacts/**', 'tools/**', 'tests/**'],
   },
 ];

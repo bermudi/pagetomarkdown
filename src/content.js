@@ -3,6 +3,11 @@ import Defuddle from 'defuddle';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { extractClaudeConversation } from './lib/claudeExtractor';
+import {
+    applyMermaidToDoc,
+    createMermaidContext,
+    rescueMissingDiagrams
+} from './lib/mermaid';
 import { extractRedditThread } from './lib/redditExtractor';
 import { preserveActiveTabs } from './lib/tabState';
 import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
@@ -50,15 +55,6 @@ const SHARE_WIDGET_SELECTOR = [
     '[class*="shareaholic"]'
 ].join(',');
 
-// Mermaid syntax keywords — excluded when tokenizing diagram sources for
-// label matching.
-const MERMAID_KEYWORDS = new Set([
-    'graph', 'subgraph', 'end', 'flowchart', 'statediagram', 'sequencediagram',
-    'classdiagram', 'erdiagram', 'statediagramv', 'gantt', 'mindmap', 'timeline',
-    'journey', 'gitgraph', 'classdef', 'style', 'click', 'linkstyle', 'direction',
-    'default', 'participant', 'actor', 'note', 'loop', 'alt', 'else', 'opt'
-]);
-
 // Elements that can be dropped once share links/trackers leave them empty.
 // Anything with media descendants or real text is kept.
 const EMPTIABLE_SELECTOR = 'li, ul, ol, i, span, p, div, form, section, aside';
@@ -69,11 +65,11 @@ export class AdvancedMarkdownConverter {
     constructor() {
         this.turndown = null;
         this.debug = false;
+        // Metadata only. The *content* never lives here — it is returned by
+        // extractMainContent() as a single object.
         this.defuddleResult = null;
-        this.defuddleHtml = null;
         this.options = { stripLinks: false, stripImages: false };
         this.metadataOverrides = null;
-        this.usedBodyFallback = false;
 
         this.initializeConverter();
         this.setupListeners();
@@ -262,7 +258,6 @@ export class AdvancedMarkdownConverter {
         this.log('Starting conversion...');
 
         this.metadataOverrides = null;
-        this.usedBodyFallback = false;
         this.options = {
             stripLinks: !!options?.stripLinks,
             stripImages: !!options?.stripImages
@@ -296,22 +291,40 @@ export class AdvancedMarkdownConverter {
     }
 
 
+    /**
+     * Pick the content to convert.
+     *
+     * Returns one object that describes *what we ship*: the DOM element
+     * (used for word counts) and the exact HTML that goes through turndown.
+     * Both always describe the same thing — the previous design kept the
+     * element and the HTML in two separate places, and the two could
+     * disagree (which is how page chrome ended up in files whose frontmatter
+     * described a much smaller document).
+     *
+     * @returns {{element: Element, html: string, kind: string, wordCount?: number}}
+     */
     extractMainContent() {
         const claudeConversation = extractClaudeConversation(document);
         if (claudeConversation?.article) {
             this.log('Using Claude conversation extractor');
             this.metadataOverrides = claudeConversation.metadataOverrides ?? null;
             this.defuddleResult = null;
-            this.defuddleHtml = claudeConversation.article.outerHTML || '';
-            return claudeConversation.article;
+            return {
+                element: claudeConversation.article,
+                html: claudeConversation.article.outerHTML || '',
+                kind: 'claude'
+            };
         }
 
         const poeConversation = this.extractPoeConversationTranscript();
         if (poeConversation) {
             this.log('Using Poe conversation extractor');
             this.defuddleResult = null;
-            this.defuddleHtml = null;
-            return poeConversation;
+            return {
+                element: poeConversation,
+                html: poeConversation.innerHTML || '',
+                kind: 'poe'
+            };
         }
 
         const redditThread = extractRedditThread(document);
@@ -319,15 +332,17 @@ export class AdvancedMarkdownConverter {
             this.log('Using Reddit thread extractor');
             this.metadataOverrides = redditThread.metadataOverrides ?? null;
             this.defuddleResult = null;
-            this.defuddleHtml = redditThread.article.outerHTML || '';
-            return redditThread.article;
+            return {
+                element: redditThread.article,
+                html: redditThread.article.outerHTML || '',
+                kind: 'reddit'
+            };
         }
 
         const originalBodyClone = document.body.cloneNode(true);
         const tabStateResult = this.preserveInteractiveState(originalBodyClone);
         const prunedNoise = this.pruneNoiseElements(originalBodyClone);
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
-        this.usedBodyFallback = false;
 
         try {
             this.log('Defuddle: parsing document');
@@ -335,7 +350,6 @@ export class AdvancedMarkdownConverter {
             const defuddle = new Defuddle(defuddleInput, { url: window.location.href });
             const result = defuddle.parse();
             this.defuddleResult = result;
-            this.defuddleHtml = result?.content ?? null;
             this.log('Interactive-state preprocessing complete', { ...tabStateResult, prunedNoise });
 
             const parsedBody = this.parseContentFragment(result?.content);
@@ -345,12 +359,22 @@ export class AdvancedMarkdownConverter {
                 if (this.shouldFallbackToOriginalCodeBlocks(originalBodyClone, parsedBody)) {
                     console.warn('[PageToMD] Defuddle removed code blocks – falling back to page DOM');
                     this.log('Hybrid fallback triggered', { originalPreCount, parsedPreCount });
-                    this.defuddleHtml = originalBodyClone.innerHTML || '';
-                    this.usedBodyFallback = true;
-                    return originalBodyClone;
+                    return {
+                        element: originalBodyClone,
+                        html: originalBodyClone.innerHTML || '',
+                        kind: 'body-fallback'
+                    };
                 }
 
-                return parsedBody;
+                return {
+                    element: parsedBody,
+                    html: parsedBody.innerHTML || '',
+                    kind: 'defuddle',
+                    // Defuddle counts the very selection we ship — and does it
+                    // better than a whitespace split (it counts CJK per
+                    // character).
+                    wordCount: result?.wordCount
+                };
             }
 
             this.log('Defuddle content missing or too thin – using body fallback', {
@@ -364,9 +388,11 @@ export class AdvancedMarkdownConverter {
         }
 
         this.log('Using body fallback');
-        this.defuddleHtml = originalBodyClone.innerHTML || '';
-        this.usedBodyFallback = true;
-        return originalBodyClone;
+        return {
+            element: originalBodyClone,
+            html: originalBodyClone.innerHTML || '',
+            kind: 'body-fallback'
+        };
     }
 
     shouldFallbackToOriginalCodeBlocks(originalBody, parsedBody) {
@@ -729,52 +755,24 @@ export class AdvancedMarkdownConverter {
         node.querySelectorAll('button').forEach((el) => el.remove());
     }
 
-    convertToMarkdown(contentElement) {
+    /**
+     * @param {{element: Element, html: string, kind: string}} content
+     * @returns {string} markdown
+     */
+    convertToMarkdown(content) {
         if (!this.turndown) throw new Error('Turndown not initialized');
 
-        const firstPre = contentElement.querySelector('pre');
+        const element = content?.element;
+        const sourceHtml = content?.html ?? '';
+
         this.log('Turndown: starting conversion', {
-            preCount: contentElement.querySelectorAll('pre').length,
-            codeCount: contentElement.querySelectorAll('code').length,
-            firstPreSnippet: firstPre ? (firstPre.textContent || '').trim().slice(0, 140) : null
+            kind: content?.kind,
+            preCount: element?.querySelectorAll('pre').length ?? 0,
+            codeCount: element?.querySelectorAll('code').length ?? 0,
+            sourceHtmlLength: sourceHtml.length
         });
 
-        const pageHasMermaidSvg = !!document.querySelector(
-            'svg[id^="mermaid-"], svg.mermaid, svg.flowchart, svg[aria-roledescription*="flowchart"]'
-        );
-
-        const defuddleCandidateHtml = this.defuddleHtml || '';
-        const defuddleSeemsToStripSvg =
-            !!this.defuddleHtml &&
-            pageHasMermaidSvg &&
-            !defuddleCandidateHtml.includes('<svg') &&
-            !defuddleCandidateHtml.includes('mermaid-');
-
-        const sourceHtml = defuddleSeemsToStripSvg ? (document.body?.innerHTML || '') : (this.defuddleHtml || contentElement.innerHTML || '');
-
-        if (defuddleSeemsToStripSvg) {
-            this.log('defuddle svg fallback', {
-                pageHasMermaidSvg,
-                defuddleHtmlLength: defuddleCandidateHtml.length,
-                fallbackHtmlLength: sourceHtml.length
-            });
-        }
-        this.log('convertToMarkdown: sourceHtml length', {
-            length: sourceHtml.length,
-            usingDefuddleHtml: !!this.defuddleHtml,
-            hasPreTag: sourceHtml.includes('<pre')
-        });
         const normalizedHtml = this.normalizeContentHtml(sourceHtml);
-
-        this.log('html signals', {
-            usingDefuddleHtml: !!this.defuddleHtml,
-            pageHasMermaidSvg,
-            defuddleSeemsToStripSvg,
-            sourceHtmlHasSvg: sourceHtml.includes('<svg'),
-            sourceHtmlHasMermaid: sourceHtml.includes('mermaid-'),
-            normalizedHtmlHasSvg: normalizedHtml.includes('<svg'),
-            normalizedHtmlHasMermaid: normalizedHtml.includes('mermaid-')
-        });
 
         const markdown = this.turndown.turndown(normalizedHtml);
         const cleaned = this.cleanupMarkdown(markdown);
@@ -791,132 +789,40 @@ export class AdvancedMarkdownConverter {
         const body = doc.body || doc.documentElement;
 
         // Defuddle's output can still contain share widgets and tracking
-        // pixels (its blocklist and small-image pass miss them); scrub
-        // every source path here, including the live-DOM mermaid fallback.
+        // pixels (its blocklist and small-image pass miss them).
         this.pruneNoiseElements(body);
 
-        const rawMermaidSources = this.extractMermaidBlocksFromRawHtml(html);
-        // Next.js/SPA pages (e.g. DeepWiki) ship the original markdown inside
-        // RSC <script> payloads that defuddle strips; the live body HTML keeps
-        // them, so scan it as an extra source pool.
-        const pageMermaidSources =
+        // Mermaid sources can live in the selected content or only in the
+        // page's own payload (Next.js/SPA pages ship the original markdown
+        // inside RSC <script> payloads that defuddle strips). Pool both.
+        const pageHtml =
             typeof document !== 'undefined' && document.body
-                ? this.extractMermaidBlocksFromRawHtml(document.body.innerHTML || '')
-                : [];
-        const mermaidSources = [...new Set([...rawMermaidSources, ...pageMermaidSources])];
-        const consumedMermaidSources = new Set();
-        let rawMermaidUsedCount = 0;
-        let rawMermaidIndex = 0;
+                ? document.body.innerHTML || ''
+                : '';
+        const ctx = createMermaidContext(`${html}\n${pageHtml}`);
 
-        const svgs = Array.from(body.querySelectorAll('svg'));
-        let mermaidSvgCount = 0;
-        let mermaidReplacedCount = 0;
-        let mermaidPlaceholderCount = 0;
-        let mermaidEmbeddedSvgCount = 0;
-        for (const svg of svgs) {
-            const id = svg.getAttribute('id') || '';
-            const className = svg.getAttribute('class') || '';
-            const roleDesc = svg.getAttribute('aria-roledescription') || '';
-            const isMermaid =
-                id.startsWith('mermaid-') ||
-                /\bmermaid\b/i.test(className) ||
-                /\bflowchart\b/i.test(className) ||
-                /flowchart/i.test(roleDesc);
+        const mermaidStats = applyMermaidToDoc(doc, ctx);
+        // Diagrams the extractor dropped (the SVG lived outside the selected
+        // container) are recovered from the page instead of shipping the
+        // whole page as a fallback.
+        const rescueStats = rescueMissingDiagrams({
+            liveDoc: typeof document !== 'undefined' ? document : null,
+            selectionDoc: doc,
+            ctx
+        });
 
-            if (!isMermaid) continue;
-
-            mermaidSvgCount += 1;
-
-            let source = this.extractMermaidSource(svg);
-
-            if (!source) {
-                source = this.matchMermaidSourceByText(svg.textContent || '', mermaidSources, consumedMermaidSources);
-                if (source) {
-                    consumedMermaidSources.add(source);
-                    rawMermaidUsedCount += 1;
-                }
-            }
-
-            if (!source && rawMermaidIndex < mermaidSources.length) {
-                const pick = this.pickRawMermaidSourceForSvg(svg, mermaidSources, rawMermaidIndex);
-                source = pick.source;
-                rawMermaidIndex = pick.nextIndex;
-                if (pick.used) {
-                    rawMermaidUsedCount += 1;
-                }
-            }
-            if (!source) {
-                const dataUri = this.svgToDataUri(svg);
-                if (dataUri) {
-                    const img = doc.createElement('img');
-                    img.setAttribute('alt', 'Mermaid diagram');
-                    img.setAttribute('src', dataUri);
-                    svg.replaceWith(img);
-                    mermaidEmbeddedSvgCount += 1;
-                } else {
-                    const placeholder = doc.createElement('p');
-                    placeholder.textContent = '[Mermaid diagram omitted: source not found in page HTML]';
-                    svg.replaceWith(placeholder);
-                    mermaidPlaceholderCount += 1;
-                }
-                continue;
-            }
-
-            svg.replaceWith(this.buildMermaidPre(doc, source));
-            mermaidReplacedCount += 1;
-        }
-
-        if (mermaidSvgCount > 0) {
-            this.log('normalizeContentHtml: mermaid SVG preprocessing', {
-                mermaidSvgCount,
-                mermaidReplacedCount,
-                mermaidPlaceholderCount,
-                mermaidEmbeddedSvgCount,
-                rawMermaidSourceCount: mermaidSources.length,
-                rawMermaidUsedCount
+        if (mermaidStats.svgSeen || mermaidStats.garbageRecovered || rescueStats.injected) {
+            this.log('normalizeContentHtml: mermaid preprocessing', {
+                ...mermaidStats,
+                rescued: rescueStats.injected
             });
         }
-
-        this.log('svg scan', {
-            svgCount: svgs.length,
-            mermaidSvgCount,
-            mermaidReplacedCount,
-            mermaidPlaceholderCount,
-            mermaidEmbeddedSvgCount,
-            rawMermaidSourceCount: mermaidSources.length,
-            rawMermaidUsedCount
-        });
 
         const pres = Array.from(body.querySelectorAll('pre'));
         this.log('normalizeContentHtml: found PRE elements in source HTML', { count: pres.length });
 
-        let mermaidGarbagePreCount = 0;
         for (const pre of pres) {
             if (!body.contains(pre)) continue;
-
-            const preText = (pre.textContent || '').trim();
-            if (preText && this.isMermaidGarbageText(preText)) {
-                mermaidGarbagePreCount += 1;
-                const source = this.matchMermaidSourceByText(preText, mermaidSources, consumedMermaidSources);
-                if (source) {
-                    consumedMermaidSources.add(source);
-                    rawMermaidUsedCount += 1;
-                    pre.replaceWith(this.buildMermaidPre(doc, source));
-                } else {
-                    const placeholder = doc.createElement('blockquote');
-                    const p = doc.createElement('p');
-                    const strong = doc.createElement('strong');
-                    strong.textContent = 'Diagram:';
-                    p.appendChild(strong);
-                    const labels = this.extractMermaidRenderedLabels(preText);
-                    p.appendChild(
-                        doc.createTextNode(labels ? ` ${labels}` : ' mermaid diagram (rendered source unavailable)')
-                    );
-                    placeholder.appendChild(p);
-                    pre.replaceWith(placeholder);
-                }
-                continue;
-            }
 
             const language = this.detectLanguageForPre(pre);
 
@@ -943,12 +849,6 @@ export class AdvancedMarkdownConverter {
             pre.appendChild(code);
         }
 
-        if (mermaidGarbagePreCount > 0) {
-            this.log('normalizeContentHtml: mermaid-rendered pre blocks', {
-                mermaidGarbagePreCount
-            });
-        }
-
         const result = body.innerHTML;
         const firstPreMatch = result.match(/<pre[^>]*>[\s\S]{0,300}/);
         this.log('normalizeContentHtml: first <pre> snippet after normalization', {
@@ -956,210 +856,6 @@ export class AdvancedMarkdownConverter {
         });
 
         return result;
-    }
-
-    buildMermaidPre(doc, source) {
-        const pre = doc.createElement('pre');
-        pre.setAttribute('data-pagetomd-generated', 'mermaid');
-        const code = doc.createElement('code');
-        code.setAttribute('data-lang', 'mermaid');
-        code.setAttribute('class', 'language-mermaid');
-        code.textContent = source;
-        pre.appendChild(code);
-        return pre;
-    }
-
-    // Text left behind when a renderer replaces a ```mermaid code block with
-    // the rendered SVG and an extractor then flattens the SVG to text: the
-    // scoped <style> rules followed by concatenated node labels.
-    isMermaidGarbageText(text) {
-        if (!text) return false;
-        if (/^#\S*mermaid\S*\s*\{/i.test(text)) return true;
-        if (text.includes('edge-animation-frame')) return true;
-        return (
-            text.includes('#mermaid-') &&
-            (text.includes('@keyframes') || text.includes('stroke-dasharray'))
-        );
-    }
-
-    mermaidCandidateTokens(source) {
-        const tokens = new Set();
-        const re = /[A-Za-z][A-Za-z0-9_]*(?:[./][A-Za-z0-9_./-]+)*/g;
-        let m;
-        while ((m = re.exec(source))) {
-            const tok = m[0];
-            if (tok.length < 3) continue;
-            if (MERMAID_KEYWORDS.has(tok.toLowerCase())) continue;
-            tokens.add(tok);
-        }
-        return tokens;
-    }
-
-    // Score each candidate by the fraction of its identifier tokens visible in
-    // the rendered remnant (svg text or mangled code text). Node labels and
-    // paths survive rendering, so the true source scores far above lookalikes.
-    matchMermaidSourceByText(haystack, candidates, consumed) {
-        if (!haystack || !candidates?.length) return '';
-        let best = '';
-        let bestScore = 0;
-        let bestHits = 0;
-        for (const cand of candidates) {
-            if (!cand || consumed?.has(cand)) continue;
-            const toks = this.mermaidCandidateTokens(cand);
-            if (!toks.size) continue;
-            let hits = 0;
-            for (const t of toks) {
-                if (haystack.includes(t)) hits += 1;
-            }
-            const score = hits / toks.size;
-            if (score > bestScore || (score === bestScore && hits > bestHits)) {
-                best = cand;
-                bestScore = score;
-                bestHits = hits;
-            }
-        }
-        if (best && bestScore >= 0.5 && bestHits >= 2) return best;
-        return '';
-    }
-
-    // The label tail of a rendered-mermaid text blob: everything after the
-    // last CSS '}' is the concatenated node/edge labels.
-    extractMermaidRenderedLabels(text) {
-        if (!text) return '';
-        const tail = text.slice(text.lastIndexOf('}') + 1);
-        const spaced = tail
-            .replace(/([a-z0-9)])([A-Z])/g, '$1 $2')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return spaced;
-    }
-
-    pickRawMermaidSourceForSvg(svgElement, rawMermaidSources, startIndex) {
-        const className = (svgElement?.getAttribute?.('class') || '').toLowerCase();
-        const roleDesc = (svgElement?.getAttribute?.('aria-roledescription') || '').toLowerCase();
-
-        let expected = 'graph';
-        if (className.includes('statediagram') || roleDesc.includes('state')) expected = 'state';
-        if (className.includes('sequencediagram') || roleDesc.includes('sequence')) expected = 'sequence';
-        if (className.includes('flowchart') || roleDesc.includes('flowchart')) expected = 'graph';
-
-        const matchesType = (src) => {
-            const first = (src || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
-            const lower = first.toLowerCase();
-            if (expected === 'state') return lower.startsWith('statediagram');
-            if (expected === 'sequence') return lower.startsWith('sequencediagram');
-            return lower.startsWith('graph') || lower.startsWith('flowchart');
-        };
-
-        for (let i = startIndex; i < rawMermaidSources.length; i += 1) {
-            const candidate = rawMermaidSources[i] || '';
-            if (!candidate) continue;
-            if (!matchesType(candidate)) continue;
-            return { source: candidate, nextIndex: i + 1, used: true };
-        }
-
-        const fallback = rawMermaidSources[startIndex] || '';
-        if (!fallback) return { source: '', nextIndex: startIndex, used: false };
-        return { source: fallback, nextIndex: startIndex + 1, used: true };
-    }
-
-    extractMermaidSource(svgElement) {
-        if (!svgElement) return '';
-
-        const attrCandidates = ['data-source', 'data-mermaid', 'data-diagram', 'data-graph', 'data-code'];
-        for (const attr of attrCandidates) {
-            const value = svgElement.getAttribute(attr);
-            if (value && /\S/.test(value)) return value.trim();
-        }
-
-        for (const attr of attrCandidates) {
-            const el = svgElement.closest?.(`[${attr}]`);
-            if (!el) continue;
-            const value = el.getAttribute(attr);
-            if (value && /\S/.test(value)) return value.trim();
-        }
-
-        const container = svgElement.closest('figure, div, section, article') || svgElement.parentElement;
-
-        const selectors = [
-            'pre code.language-mermaid',
-            'code.language-mermaid',
-            'pre.mermaid',
-            'code.mermaid',
-            'pre code[data-lang="mermaid"]',
-            'code[data-lang="mermaid"]',
-            'div.mermaid',
-            'script[type="application/mermaid"]',
-            'script[type="text/plain"][data-lang="mermaid"]'
-        ];
-
-        if (container) {
-            for (const sel of selectors) {
-                const el = container.querySelector(sel);
-                if (!el) continue;
-                if (el === svgElement) continue;
-                if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
-                const text = (el.innerText ?? el.textContent ?? '').trim();
-                if (text) return text;
-            }
-        }
-
-        const doc = svgElement.ownerDocument;
-        if (doc) {
-            for (const sel of selectors) {
-                const el = doc.querySelector(sel);
-                if (!el) continue;
-                if (el.closest?.('[data-pagetomd-generated="mermaid"]')) continue;
-                const text = (el.innerText ?? el.textContent ?? '').trim();
-                if (text) return text;
-            }
-        }
-
-        return '';
-    }
-
-    extractMermaidBlocksFromRawHtml(html) {
-        if (!html) return [];
-
-        const results = [];
-        const re = /```mermaid(?:\r?\n|\\n)([\s\S]*?)```/g;
-        let match;
-        while ((match = re.exec(html))) {
-            const raw = match[1] || '';
-            const decoded = this.unescapeEmbeddedText(raw).trim();
-            if (decoded) results.push(decoded);
-        }
-        return results;
-    }
-
-    unescapeEmbeddedText(text) {
-        if (!text) return '';
-        let result = String(text);
-        result = result.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
-        result = result.replace(/\\n/g, '\n');
-        result = result.replace(/\\r/g, '\r');
-        result = result.replace(/\\t/g, '\t');
-        result = result.replace(/\\"/g, '"');
-        result = result.replace(/\\\\/g, '\\');
-        return result;
-    }
-
-    svgToDataUri(svgElement) {
-        try {
-            const serializer = new XMLSerializer();
-            let svgText = serializer.serializeToString(svgElement);
-            if (!/\sxmlns=/.test(svgText)) {
-                svgText = svgText.replace(
-                    '<svg',
-                    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
-                );
-            }
-            svgText = svgText.replace(/>\s+</g, '><').trim();
-            const encoded = encodeURIComponent(svgText).replace(/'/g, '%27').replace(/"/g, '%22');
-            return `data:image/svg+xml;charset=utf-8,${encoded}`;
-        } catch {
-            return '';
-        }
     }
 
     detectLanguageForPre(pre) {
@@ -1215,7 +911,10 @@ export class AdvancedMarkdownConverter {
         return '';
     }
 
-    extractMetadata(contentElement) {
+    /**
+     * @param {{element: Element, kind: string, wordCount?: number}} content
+     */
+    extractMetadata(content) {
         const doc = document;
 
         const def = this.defuddleResult;
@@ -1238,14 +937,16 @@ export class AdvancedMarkdownConverter {
             readingTime: 0
         };
 
-        // Count what we actually ship – the extraction or pruned fallback –
-        // not the live document with all of its chrome.
-        const text = (contentElement || doc.body).textContent || '';
-        // defuddle's wordCount describes its own (possibly failed) selection;
-        // when we fell back to the page body, count what we actually ship.
-        metadata.wordCount = (!this.usedBodyFallback && def?.wordCount)
-            ? def.wordCount
-            : text.trim().split(/\s+/).length;
+        // Count what we actually ship — the selection, not the live document
+        // with all of its chrome. Defuddle's own count describes exactly the
+        // selection we ship (and counts CJK per character, better than a
+        // whitespace split); when we fell back to the page body we count the
+        // body ourselves.
+        const element = content?.element || doc.body;
+        const text = (element?.textContent || '') || '';
+        metadata.wordCount = Number.isFinite(content?.wordCount)
+            ? content.wordCount
+            : (text.trim() ? text.trim().split(/\s+/).length : 0);
         metadata.readingTime = Math.ceil(metadata.wordCount / 200);
 
         if (this.metadataOverrides) {

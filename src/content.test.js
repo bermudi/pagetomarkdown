@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 
 // Mock webextension-polyfill before importing content.js
 vi.mock('webextension-polyfill', () => ({
@@ -397,7 +397,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
     describe('extractMetadata', () => {
       it('counts words from the shipped content, not the live document', () => {
         const contentElement = fragment(`<main><p>one two three four five</p></main>`);
-        const metadata = converter.extractMetadata(contentElement);
+        const metadata = converter.extractMetadata({ element: contentElement, kind: 'defuddle' });
         expect(metadata.wordCount).toBe(5);
         expect(metadata.readingTime).toBe(1);
       });
@@ -418,11 +418,13 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
             <div hidden>invisible junk</div>
           `;
           const result = converter.extractMainContent();
-          const text = result.textContent || '';
+          const text = result.element.textContent || '';
           expect(text).toContain('Assistant reply');
           expect(text).not.toContain('Skip to main content');
           expect(text).not.toContain('draggable item');
           expect(text).not.toContain('invisible junk');
+          // The shipped HTML must describe the same content as the element.
+          expect(result.html).toContain('Assistant reply');
         } finally {
           document.body.innerHTML = originalBody;
         }
@@ -461,7 +463,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
             <div>Write a message…</div>
           `;
           const result = converter.extractMainContent();
-          const text = result.textContent || '';
+          const text = result.element.textContent || '';
           expect(text).toContain('what do you think of my prompt');
           expect(text).toContain('Prompt:');
           expect(text).toContain("Honestly, it's good");
@@ -470,12 +472,66 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           expect(text).not.toContain('Thought for 12s');
           expect(text).not.toContain('Sidebar noise');
           expect(text).not.toContain('Write a message');
-          expect(result.querySelectorAll('section[data-speaker-role]').length).toBe(2);
+          expect(result.element.querySelectorAll('section[data-speaker-role]').length).toBe(2);
         } finally {
           window.happyDOM.setURL(originalUrl);
           document.body.innerHTML = originalBody;
           document.title = originalTitle;
         }
+      });
+    });
+
+    // Regression: the pipeline used to keep the selected content in one
+    // place (extractMainContent) and the HTML to convert in another
+    // (this.defuddleHtml). When the selection had lost a rendered diagram,
+    // the converter swapped in the *whole live page* — shipping nav bars,
+    // sidebars and footers — while the frontmatter still described the
+    // small selection. One content object, one truth.
+    describe('single source of truth (regression)', () => {
+      const originalBody = document.body.innerHTML;
+
+      afterEach(() => {
+        document.body.innerHTML = originalBody;
+      });
+
+      it('never ships the whole page when the selection lost a diagram', () => {
+        document.body.innerHTML = `
+          <div class="sidebar">SIDEBAR NOISE</div>
+          <header class="site-header">HEADER CHROME</header>
+          <main><p>The article paragraph that the extractor selected.</p></main>
+          <div class="diagram"><svg id="mermaid-live" data-source="graph TD; A--&gt;B"></svg></div>
+        `;
+
+        const selection = fragment(
+          '<main><p>The article paragraph that the extractor selected.</p></main>'
+        );
+        const markdown = converter.convertToMarkdown({
+          element: selection,
+          html: selection.innerHTML,
+          kind: 'defuddle'
+        });
+
+        expect(markdown).not.toContain('SIDEBAR NOISE');
+        expect(markdown).not.toContain('HEADER CHROME');
+        expect(markdown).toContain('The article paragraph');
+        // the dropped diagram is recovered instead of dragging the page in
+        expect(markdown).toContain('```mermaid');
+        expect(markdown).toContain('graph TD; A-->B');
+      });
+
+      it('counts the words it actually ships', () => {
+        document.body.innerHTML = `
+          <div class="sidebar">chrome chrome chrome chrome chrome chrome</div>
+          <main><p>one two three</p></main>
+        `;
+
+        const content = converter.extractMainContent();
+        const metadata = converter.extractMetadata(content);
+        const markdown = converter.convertToMarkdown(content);
+
+        expect(markdown).not.toContain('chrome');
+        expect(metadata.wordCount).toBe(3);
+        expect(metadata.readingTime).toBe(1);
       });
     });
   });

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Widget overview - Example Docs</title>
+<meta name="description" content="How the widget works and how to embed it.">
+<meta property="og:title" content="Widget overview - Example Docs">
+<meta name="author" content="Example Inc.">
+</head>
+<body>
+<header class="site-header">
+  <a class="logo" href="/">Example</a>
+  <nav class="top-nav">
+    <a href="/docs">Docs</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/login">Log in</a>
+  </nav>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h3>On this page</h3>
+    <ul>
+      <li><a href="#install">Installation</a></li>
+      <li><a href="#usage">Usage</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+    </ul>
+    <div class="promo">
+      <p>Upgrade to Pro for unlimited widgets and priority support.</p>
+      <a href="/upgrade">Upgrade</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <h1>Widget overview</h1>
+    <p>The widget renders interactive charts from your own data. This page explains how to install it, how to embed it in a page, and how the pieces fit together.</p>
+
+    <h2 id="install">Installation</h2>
+    <p>Install the package with your package manager of choice. The widget ships as an ES module and works in every modern browser.</p>
+    <pre><code class="language-bash">npm install @example/widget --save</code></pre>
+    <p>Import it once at the top of your bundle:</p>
+    <pre><code class="language-js">import { createWidget } from '@example/widget';
+
+const widget = createWidget('#chart', { type: 'bar' });
+widget.render(data);</code></pre>
+
+    <h2 id="usage">Usage</h2>
+    <p>Pass the container element and a configuration object. The widget takes care of sizing, theming and accessibility on its own.</p>
+    <ul>
+      <li><code>type</code> — the chart type to render</li>
+      <li><code>theme</code> — a named theme or a custom palette</li>
+      <li><code>onSelect</code> — a callback fired when the user picks a data point</li>
+    </ul>
+
+    <h2 id="architecture">Architecture</h2>
+    <p>The system is split into a loader, a renderer and a transport. The loader fetches the data, the renderer draws it and the transport keeps the two in sync when the source changes.</p>
+    <div class="diagram">
+      <svg id="mermaid-abc123" aria-roledescription="flowchart"><g class="node"><text>Loader</text></g><g class="node"><text>Renderer</text></g></svg>
+    </div>
+    <p>That is the whole pipeline. Nothing else is required to get started, and every piece can be replaced independently.</p>
+
+    <table>
+      <thead><tr><th>Option</th><th>Type</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td><code>type</code></td><td>string</td><td><code>bar</code></td></tr>
+        <tr><td><code>theme</code></td><td>string</td><td><code>light</code></td></tr>
+      </tbody>
+    </table>
+  </main>
+</div>
+
+<footer class="site-footer">
+  <p>© 2026 Example Inc. All rights reserved.</p>
+</footer>
+
+<!-- The diagram source travels with the page payload (as on Next.js/SPA
+     documentation sites): the extractor strips the script, the renderer
+     replaces the fence with an SVG. The pipeline has to recover the source
+     from here. -->
+<script>self.__next_f.push(["1","content:\n```mermaid\ngraph TD\n  Loader[\"Loader\"] --> Renderer[\"Renderer\"]\n```\n"])</script>
+</body>
+</html>
