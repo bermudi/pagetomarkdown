@@ -64,8 +64,8 @@ The landscape, after a full day of archaeology:
 
 ## Mermaid / rendered-diagram salvage (verified 2026-10-21, DeepWiki)
 
-All of this lives in `src/lib/mermaid.js` now (it was 376 lines inside
-`content.js`); `content.js` only orchestrates it.
+All of this lives in `src/lib/mermaid.ts` now (it was 376 lines inside
+`content.js`); `content.ts` only orchestrates it.
 
 - DeepWiki renders ` ```mermaid ` code blocks inside `<pre>` wrappers; mermaid.js
   replaces the code text with the rendered `<svg id="mermaid-…">`.
@@ -118,9 +118,9 @@ sidebars included, with frontmatter that still described the small selection.
 
 ## Fixtures and golden files (2026-10-22)
 
-- `src/pipeline.test.js` runs whole pages through the pipeline and compares
+- `src/pipeline.test.ts` runs whole pages through the pipeline and compares
   against `tests/fixtures/pipeline/*.expected.md`. Regenerate with
-  `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`.
+  `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.ts`.
 - **Capture real pages, don't invent them.** `agent-browser` (headless
   Chrome) gets pages that `curl` cannot — DeepWiki serves a Vercel security
   checkpoint to plain requests but renders fine in a browser.
@@ -173,6 +173,13 @@ script → file on disk.
   loaded add-on reports the in-repo manifest version — it is kept in sync
   with `package.json` by `pnpm run sync-manifest` (CI fails on drift), so
   "Temporary Extension" is the only tell that you are not on the AMO copy.
+- The web-ext ignore list lives in `web-ext-config.mjs` and is the only one:
+  CI lint, publish lint/sign and local `web-ext` runs all read it (web-ext 10
+  rejects a plain `web-ext-config.js` when package.json is `"type": "module"`).
+  There are no `--ignore-files` flags anywhere — edit the config, never a
+  workflow. It ships exactly `manifest.json` + `dist/` + `icons/`; the
+  zero-byte `scripts/`/`src/`/`tests/` dir entries in a built zip are a
+  web-ext quirk, not leaked files.
 - `pnpm lint && pnpm test && pnpm run typecheck && pnpm build` must pass before
   commits; `eslint.config.js` lists browser globals explicitly (add new ones
   there). Test files run in Node, so they get their own globals block there.

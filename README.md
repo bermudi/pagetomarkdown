@@ -21,8 +21,8 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 - **High‑quality Markdown**
   Uses `turndown` + GFM plugin with custom rules for:
   - Fenced code blocks, including language hints from `language-*`, `data-lang`, `data-language`, and `lang-*`
-  - Mermaid diagrams (`src/lib/mermaid.js`): `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI. Rendered diagrams dissolved to CSS+label text inside `<pre>` wrappers (DeepWiki-style) are recovered by matching ` ```mermaid ` sources embedded in the page (e.g. Next.js RSC payloads) against the surviving labels; unmatched ones become a `> **Diagram:** …` blockquote with the extracted labels. A diagram the extractor dropped entirely is recovered from the page and placed back after the heading it belongs to.
-  - Tables compressed into a code block (`| a | b ||| --- | --- ||| 1 | 2 |`) → a real markdown table (`src/lib/compressedTables.js`)
+  - Mermaid diagrams (`src/lib/mermaid.ts`): `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI. Rendered diagrams dissolved to CSS+label text inside `<pre>` wrappers (DeepWiki-style) are recovered by matching ` ```mermaid ` sources embedded in the page (e.g. Next.js RSC payloads) against the surviving labels; unmatched ones become a `> **Diagram:** …` blockquote with the extracted labels. A diagram the extractor dropped entirely is recovered from the page and placed back after the heading it belongs to.
+  - Tables compressed into a code block (`| a | b ||| --- | --- ||| 1 | 2 |`) → a real markdown table (`src/lib/compressedTables.ts`)
   - Headings: `## [Link](#anchor)` and `<a><h3>…</h3></a>` → `## Link`
   - Figures and captions (`<figure>`, `<figcaption>`) → image + italic caption
   - Pruned noise elements (`script`, `style`, `noscript`, `iframe`, `object`, `embed`, `footer`, `nav`, …)
@@ -47,8 +47,8 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 ## How it works
 
 1. You click the **Page to Markdown** toolbar button (`Shift+click` toggles link stripping) or pick **Save as Markdown** / **Save as Markdown (no links)** from the page's right‑click menu.
-2. `src/background.js` (`MarkdownDownloader`) reads `defaultStripLinks` from `browser.storage.local`, checks modifiers, and sends `trigger_conversion` with `{ stripLinks, stripImages }` to the active tab.
-3. `src/content.js` (`AdvancedMarkdownConverter.processPage`):
+2. `src/background.ts` (`MarkdownDownloader`) reads `defaultStripLinks` from `browser.storage.local`, checks modifiers, and sends `trigger_conversion` with `{ stripLinks, stripImages }` to the active tab.
+3. `src/content.ts` (`AdvancedMarkdownConverter.processPage`):
    - Reads `debugLogging` from storage to gate diagnostics (`this.log()`).
    - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing, and finally clicks "Show transcript" in the page UI itself and scrapes the rendered panel (YouTube returns empty bodies for caption URLs that lack a proof-of-origin token, so the page's own attested transcript machinery is often the only working path).
    - Else tries Claude.ai conversation transcript (`claude.ai`/`claude.com` chat `transcript-row` messages), Poe conversation transcript (`poe.com` chat messages) and Reddit thread extractor (`old.reddit.com` via `#siteTable .thing.link`; modern `shreddit` UI falls through).
@@ -56,8 +56,8 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
    - Keeps the result as **one** content object (`{ element, html, kind }`): the markdown and the word count are both derived from it, so they can never describe different documents.
    - Collects metadata from `defuddle` result + meta tags.
    - Converts the resulting HTML to Markdown via `TurndownService` + GFM, after `normalizeContentHtml` preprocessing (mermaid SVG → `pre.language-mermaid`, compressed tables → real `<table>`, `pre` → normalized `code` with language).
-4. `content.js` posts `{ markdown, metadata }` back via `browser.runtime.sendMessage`.
-5. `background.js` builds YAML frontmatter, generates a safe filename, creates a `Blob` URL, and calls `browser.downloads.download`.
+4. `content.ts` posts `{ markdown, metadata }` back via `browser.runtime.sendMessage`.
+5. `background.ts` builds YAML frontmatter, generates a safe filename, creates a `Blob` URL, and calls `browser.downloads.download`.
 
 If anything fails you see a console error (gated behind the "Enable debug logging" option) and, for most failures, an in‑page alert.
 
@@ -111,19 +111,19 @@ No other permissions (cookies, history, storage sync, remote servers, etc.) are 
 
 For auditing, the main logic lives in:
 
-- `src/content.js` — pipeline orchestration: extraction, cleanup, and Markdown conversion
-- `src/background.js` — frontmatter generation, filename sanitization, and file download
-- `src/options.{js,html,css}` — default mode and debug toggle
+- `src/content.ts` — pipeline orchestration: extraction, cleanup, and Markdown conversion
+- `src/background.ts` — frontmatter generation, filename sanitization, and file download
+- `src/options.{ts,html,css}` — default mode and debug toggle
 - `src/lib/` — the parts:
-  - `mermaid.js` — diagram sources, matching and recovery
-  - `noise.js` — removal of chrome, trackers and share widgets
-  - `turndownRules.js` — the markdown output rules
-  - `codeBlocks.js` — language detection and fence computation
-  - `compressedTables.js` — tables compressed into a code block
-  - `metadata.js` — frontmatter metadata
-  - `redditExtractor.js`, `claudeExtractor.js`, `poeExtractor.js` — site-specific extractors
-  - `tabState.js` — keeps only the active tab's panels
-  - `youtubeTranscript.js` — YouTube transcripts
+  - `mermaid.ts` — diagram sources, matching and recovery
+  - `noise.ts` — removal of chrome, trackers and share widgets
+  - `turndownRules.ts` — the markdown output rules
+  - `codeBlocks.ts` — language detection and fence computation
+  - `compressedTables.ts` — tables compressed into a code block
+  - `metadata.ts` — frontmatter metadata
+  - `redditExtractor.ts`, `claudeExtractor.ts`, `poeExtractor.ts` — site-specific extractors
+  - `tabState.ts` — keeps only the active tab's panels
+  - `youtubeTranscript.ts` — YouTube transcripts
 - `dist/` — bundled output from Vite (see `vite.*.config.js`)
 
 ---
@@ -134,14 +134,14 @@ For auditing, the main logic lives in:
 - **Build:** Vite with three configs (`vite.content.config.js`, `vite.background.config.js`, `vite.options.config.js`) → `dist/`; `sourcemap: mode !== 'production'` so `pnpm dev` keeps maps and `pnpm build` drops them
 - **Types:** TypeScript (strict). `src/` is `.ts`; `pnpm run typecheck` runs `tsc --noEmit` and CI enforces it. The extension's message contract lives in `src/lib/protocol.ts`; `src/types/` holds the declarations for packages that ship none (`webextension-polyfill`, `turndown-plugin-gfm`)
 - **Tests:** `vitest` + `happy-dom` (`pnpm test`) — site extractors, tab state, mermaid handling, compressed tables, the code/mermaid/heading pipeline, frontmatter/filename edge cases, and `pickBestTrack`
-- **Golden files:** `src/pipeline.test.js` runs whole pages through the pipeline and compares against `tests/fixtures/pipeline/*.expected.md` (real captured pages: a mermaid.js.org article and a DeepWiki page). Regenerate with `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`
+- **Golden files:** `src/pipeline.test.ts` runs whole pages through the pipeline and compares against `tests/fixtures/pipeline/*.expected.md` (real captured pages: a mermaid.js.org article and a DeepWiki page). Regenerate with `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.ts`
 - **End-to-end:** `tests/e2e/firefox_e2e.py` installs the extension in Firefox, clicks the toolbar button on a real page and checks the file that lands on disk — `pnpm build && uv run --with marionette_driver python tests/e2e/firefox_e2e.py` (also runs in CI)
 - **Lint:** `eslint` (`pnpm run lint`; also `web-ext lint` in CI) — TypeScript files go through `typescript-eslint`
 - **Packaging:** `build_zip.sh` stages a version-patched `manifest.json` in a temp dir and zips `manifest.json` + `dist` + `icons` → `pagetomd-*.zip` (never mutates the tracked `manifest.json`)
 
 Typical dev loop:
 
-1. Make changes to `src/content.js`, `src/background.js`, or libraries under `src/lib/`.
+1. Make changes to `src/content.ts`, `src/background.ts`, or libraries under `src/lib/`.
 2. `pnpm run build` (or `pnpm run dev` for watch mode).
 3. Reload the extension from `about:debugging` → **This Firefox** → **Reload**.
 4. Open a page, click the icon, and — if "Enable debug logging" is on — inspect the console for `[PageToMD]` diagnostics.
