@@ -117,7 +117,10 @@ def wait_for_download(download_dir: Path, timeout: float = 30.0) -> Path | None:
         if found:
             last = -1
             stable = 0
-            while stable < 3:
+            # A file that stays at 0 bytes never counts as stable; the
+            # deadline must bound this loop or an empty .md would hang the
+            # run until the job timeout instead of failing the checks.
+            while stable < 3 and time.time() < deadline:
                 size = found.stat().st_size
                 if size == last and size > 0:
                     stable += 1
