@@ -13,6 +13,8 @@ vi.mock('webextension-polyfill', () => ({
 }));
 
 import { AdvancedMarkdownConverter } from './content.js';
+import { computeFence, detectLanguage } from './lib/codeBlocks';
+import { pruneNoiseElements } from './lib/noise';
 
 describe('AdvancedMarkdownConverter - core pipeline', () => {
   let converter;
@@ -26,12 +28,12 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
 
   describe('computeFence', () => {
     it('uses triple backticks by default', () => {
-      expect(converter.computeFence('hello')).toBe('```');
+      expect(computeFence('hello')).toBe('```');
     });
     it('extends fence when code contains backticks', () => {
-      expect(converter.computeFence('code with ``` inside')).toBe('````');
-      expect(converter.computeFence('``')).toBe('```');
-      expect(converter.computeFence('````')).toBe('`````');
+      expect(computeFence('code with ``` inside')).toBe('````');
+      expect(computeFence('``')).toBe('```');
+      expect(computeFence('````')).toBe('`````');
     });
   });
 
@@ -39,12 +41,12 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
     it('detects via data-lang', () => {
       const code = document.createElement('code');
       code.setAttribute('data-lang', 'python');
-      expect(converter.detectLanguage(code)).toBe('python');
+      expect(detectLanguage(code)).toBe('python');
     });
     it('detects via class language-*', () => {
       const code = document.createElement('code');
       code.className = 'language-js hljs';
-      expect(converter.detectLanguage(code)).toBe('js');
+      expect(detectLanguage(code)).toBe('js');
     });
     it('detects via parent pre data-lang', () => {
       const pre = document.createElement('pre');
@@ -52,12 +54,12 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       const code = document.createElement('code');
       pre.appendChild(code);
       document.body.appendChild(pre);
-      expect(converter.detectLanguage(code)).toBe('rust');
+      expect(detectLanguage(code)).toBe('rust');
       pre.remove();
     });
     it('returns empty when no hint', () => {
       const code = document.createElement('code');
-      expect(converter.detectLanguage(code)).toBe('');
+      expect(detectLanguage(code)).toBe('');
     });
   });
 
@@ -236,7 +238,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           <template><p>tpl</p></template>
           <p>keep me</p>
         `);
-        const counts = converter.pruneNoiseElements(body);
+        const counts = pruneNoiseElements(body);
         expect(body.textContent).toContain('keep me');
         expect(body.textContent).not.toContain('draggable');
         expect(body.textContent).not.toContain('ghost');
@@ -254,7 +256,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           <mjx-container aria-hidden="true"><mjx-row>x</mjx-row></mjx-container>
           <div aria-hidden="true">decorative icon</div>
         `);
-        converter.pruneNoiseElements(body);
+        pruneNoiseElements(body);
         expect(body.textContent).toContain('x²');
         expect(body.textContent).toContain('+y²');
         expect(body.textContent).toContain('x');
@@ -268,7 +270,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           </div>
           <div id="modal" role="dialog"><button>Close</button></div>
         `);
-        converter.pruneNoiseElements(body);
+        pruneNoiseElements(body);
         expect(body.textContent).toContain('Real article text.');
       });
 
@@ -277,7 +279,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           <div style="background:url('data:image/svg+xml;display:none,xyz')">visible</div>
           <div style="display:none">gone</div>
         `);
-        converter.pruneNoiseElements(body);
+        pruneNoiseElements(body);
         expect(body.textContent).toContain('visible');
         expect(body.textContent).not.toContain('gone');
       });
@@ -293,7 +295,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           <img src="https://example.com/beacon" style="width:1px;height:1px">
           <img src="https://example.com/real-photo.jpg" alt="Actual content">
         `);
-        const counts = converter.pruneNoiseElements(body);
+        const counts = pruneNoiseElements(body);
         expect(counts.trackers).toBe(4);
         expect(body.innerHTML).toContain('real-photo.jpg');
         expect(body.innerHTML).not.toContain('trackingservlet');
@@ -314,7 +316,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
           <p>Keep this <a href="https://example.com/real-link">real link</a>.</p>
           <ul><li><a href="https://news.ycombinator.com/submitlink?u=x&t=t">Share on HN</a></li></ul>
         `);
-        const counts = converter.pruneNoiseElements(body);
+        const counts = pruneNoiseElements(body);
         // ul.sharing, .share-dialog-content and #share-menu go as whole
         // widgets first; only the bare <ul><li><a> HN item remains for the
         // link pass.
@@ -335,7 +337,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
             <li><a href="https://reddit.com/submit?url=u"><img src="/i/r.png"></a></li>
           </ul>
         `);
-        converter.pruneNoiseElements(body);
+        pruneNoiseElements(body);
         const md = converter.turndown.turndown(body.innerHTML);
         expect(md).toContain('article body');
         expect(md).not.toMatch(/sharer|reddit\.com\/submit/);
@@ -347,7 +349,7 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
         const body = fragment(`
           <p>Contact <a href="mailto:author@example.com">the author</a>.</p>
         `);
-        converter.pruneNoiseElements(body);
+        pruneNoiseElements(body);
         expect(body.innerHTML).toContain('mailto:author@example.com');
       });
     });

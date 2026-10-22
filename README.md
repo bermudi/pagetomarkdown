@@ -114,7 +114,16 @@ For auditing, the main logic lives in:
 - `src/content.js` — pipeline orchestration: extraction, cleanup, and Markdown conversion
 - `src/background.js` — frontmatter generation, filename sanitization, and file download
 - `src/options.{js,html,css}` — default mode and debug toggle
-- `src/lib/` — site-specific extractors (`redditExtractor`, `claudeExtractor`, `poeExtractor`), mermaid handling (`mermaid`), compressed-table repair (`compressedTables`), tab state (`tabState`), YouTube transcripts (`youtubeTranscript`)
+- `src/lib/` — the parts:
+  - `mermaid.js` — diagram sources, matching and recovery
+  - `noise.js` — removal of chrome, trackers and share widgets
+  - `turndownRules.js` — the markdown output rules
+  - `codeBlocks.js` — language detection and fence computation
+  - `compressedTables.js` — tables compressed into a code block
+  - `metadata.js` — frontmatter metadata
+  - `redditExtractor.js`, `claudeExtractor.js`, `poeExtractor.js` — site-specific extractors
+  - `tabState.js` — keeps only the active tab's panels
+  - `youtubeTranscript.js` — YouTube transcripts
 - `dist/` — bundled output from Vite (see `vite.*.config.js`)
 
 ---

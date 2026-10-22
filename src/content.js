@@ -1,7 +1,5 @@
 import browser from 'webextension-polyfill';
 import Defuddle from 'defuddle';
-import TurndownService from 'turndown';
-import { gfm } from 'turndown-plugin-gfm';
 import { extractClaudeConversation } from './lib/claudeExtractor';
 import { buildTableElement, parseCompressedTable } from './lib/compressedTables';
 import {
@@ -10,58 +8,13 @@ import {
     rescueMissingDiagrams
 } from './lib/mermaid';
 import { extractRedditThread } from './lib/redditExtractor';
+import { pruneNoiseElements } from './lib/noise';
+import { detectLanguageForPre } from './lib/codeBlocks';
+import { extractMetadata } from './lib/metadata';
+import { createTurndownService } from './lib/turndownRules';
 import { extractPoeConversation } from './lib/poeExtractor';
 import { preserveActiveTabs } from './lib/tabState';
 import { tryExtractYouTubeTranscript } from './lib/youtubeTranscript';
-
-// Links whose only destination is a share/bookmark endpoint carry no article
-// content (issue #24: Hackaday's share icons leaked into the markdown).
-const SHARE_HREF_PATTERN =
-    /facebook\.com\/shar|(?:twitter\.com|x\.com)\/(?:intent|share)|linkedin\.com\/shar|reddit\.com\/submit|news\.ycombinator\.com\/submitlink|pinterest\.[a-z.]+\/pin\/create|bsky\.app\/intent|(?:api\.)?whatsapp\.com\/send|wa\.me\/|(?:t|telegram)\.me\/share|buffer(?:app)?\.com\/add|mailto:\s*\?/i;
-
-// Tracking pixels / analytics beacons. Defuddle's small-image pass needs
-// layout dimensions a detached clone doesn't have, so these survive unless
-// we match them ourselves.
-const TRACKER_IMG_PATTERN = new RegExp(
-    [
-        '\\/\\/[^/?#]*(?:analytics|metrics|telemetry|beacon|stats|track|pixel|impression)[.-]',
-        'trackingservlet',
-        'google-analytics\\.com',
-        'googletagmanager\\.com',
-        'doubleclick\\.',
-        'scorecardresearch\\.com',
-        'quantserve\\.',
-        'clarity\\.ms',
-        'bat\\.bing\\.com',
-        'facebook\\.com\\/tr',
-        '\\/(?:pixel|beacon|collect|impression|spacer|1x1|track|tracking|pageview)(?:\\.[a-z0-9]{2,5}|[/?#]|$)'
-    ].join('|'),
-    'i'
-);
-
-// Share-widget containers defuddle's blocklist doesn't cover (it has
-// 'sharing_' but not bare 'sharing', and nothing for share dialogs).
-const SHARE_WIDGET_SELECTOR = [
-    '[class~="sharing"]',
-    '[class~="share-menu"]',
-    '[id="share-menu"]',
-    '[class~="share-dialog"]',
-    '[class~="share-dialog-content"]',
-    '[class~="social-sharing"]',
-    '[class~="post-share"]',
-    '[class~="entry-share"]',
-    '[class~="share-buttons"]',
-    '[class*="addtoany"]',
-    '[class*="addthis"]',
-    '[class*="sharethis"]',
-    '[class*="shareaholic"]'
-].join(',');
-
-// Elements that can be dropped once share links/trackers leave them empty.
-// Anything with media descendants or real text is kept.
-const EMPTIABLE_SELECTOR = 'li, ul, ol, i, span, p, div, form, section, aside';
-const CONTENT_BEARING_SELECTOR =
-    'img, svg, video, audio, iframe, canvas, object, embed, pre, code, table, figure, math, mjx-container, input, select, textarea, hr';
 
 export class AdvancedMarkdownConverter {
     constructor() {
@@ -73,7 +26,10 @@ export class AdvancedMarkdownConverter {
         this.options = { stripLinks: false, stripImages: false };
         this.metadataOverrides = null;
 
-        this.initializeConverter();
+        this.turndown = createTurndownService({
+            getOptions: () => this.options,
+            log: (...args) => this.log(...args)
+        });
         this.setupListeners();
     }
 
@@ -83,171 +39,6 @@ export class AdvancedMarkdownConverter {
                 void this.processPage(message?.options);
             }
         });
-    }
-
-    initializeConverter() {
-        this.turndown = new TurndownService({
-            headingStyle: 'atx',
-            hr: '---',
-            bulletListMarker: '-',
-            codeBlockStyle: 'fenced',
-            fence: '```',
-            preformattedCode: true,
-            emDelimiter: '*',
-            strongDelimiter: '**',
-            linkStyle: 'inlined'
-        });
-
-        if (gfm) {
-            this.turndown.use(gfm);
-        }
-
-        this.addCustomRules();
-    }
-
-    addCustomRules() {
-        const self = this;
-
-        this.turndown.addRule('stripLinks', {
-            filter: (node) => self.options.stripLinks && node.nodeName === 'A',
-            replacement: (content) => content
-        });
-
-        this.turndown.addRule('stripImages', {
-            filter: (node) => self.options.stripImages && node.nodeName === 'IMG',
-            replacement: (_content, node) => {
-                const alt = (node.getAttribute('alt') || '').trim().replace(/\s+/g, ' ');
-                if (!alt) return '';
-                return `(Image: ${alt})`;
-            }
-        });
-
-        this.turndown.addRule('preformattedCode', {
-            filter: (node) => {
-                const match = node.nodeName === 'PRE';
-                if (match) {
-                    self.log('preformattedCode: filter matched PRE node');
-                }
-                return match;
-            },
-            replacement: (_content, node) => {
-                self.log('preformattedCode: replacement called');
-                const codeElement = node.querySelector('code');
-                const language = codeElement ? self.detectLanguage(codeElement) : '';
-                const code = (codeElement?.textContent ?? node.textContent ?? '').trim();
-
-                if (!code) {
-                    self.log('preformattedCode: empty code block skipped');
-                    return '';
-                }
-
-                const fence = self.computeFence(code);
-                const langSuffix = language ? language : '';
-                const result = `\n\n${fence}${langSuffix}\n${code}\n${fence}\n\n`;
-                self.log('preformattedCode: returning fenced block', { codeLen: code.length, lang: langSuffix });
-
-                return result;
-            }
-        });
-
-        this.prioritizeRule('preformattedCode');
-
-        this.turndown.addRule('inlineCode', {
-            filter: (node) => node.nodeName === 'CODE' && (!node.parentNode || node.parentNode.nodeName !== 'PRE'),
-            replacement: (_content, node) => {
-                const code = node.textContent || '';
-                if (!code) return '';
-                if (code.includes('`')) {
-                    return '``' + code + '``';
-                }
-                return '`' + code + '`';
-            }
-        });
-
-        this.turndown.addRule('cleanHeadings', {
-            filter: (node) => /^H[1-6]$/.test(node.nodeName),
-            replacement: (_content, node) => {
-                const level = Number.parseInt(node.nodeName.substring(1), 10);
-                const hashes = '#'.repeat(level);
-                const text = node.textContent.trim();
-                return `\n\n${hashes} ${text}\n\n`;
-            }
-        });
-
-        this.turndown.addRule('headingLinks', {
-            filter: (node) => {
-                if (/^H[1-6]$/.test(node.nodeName)) {
-                    const anchors = Array.from(node.querySelectorAll(':scope > a'));
-                    if (anchors.length === 1) return true;
-
-                    const nonWhitespaceChildren = Array.from(node.childNodes).filter(
-                        (n) => !(n.nodeType === Node.TEXT_NODE && !n.textContent.trim())
-                    );
-                    if (nonWhitespaceChildren.length === 1 && nonWhitespaceChildren[0].nodeName === 'A') {
-                        return true;
-                    }
-                }
-                return false;
-            },
-            replacement: (_content, node) => {
-                const level = Number.parseInt(node.nodeName.substring(1), 10);
-                const hashes = '#'.repeat(level);
-                const text = node.textContent.trim();
-                return `\n\n${hashes} ${text}\n\n`;
-            }
-        });
-
-        this.turndown.addRule('linkedHeadings', {
-            filter: (node) => node.nodeName === 'A' && !!node.querySelector('h1, h2, h3, h4, h5, h6'),
-            replacement: (_content, node) => {
-                const heading = node.querySelector('h1, h2, h3, h4, h5, h6');
-                const level = heading ? Number.parseInt(heading.nodeName.substring(1), 10) : 1;
-                const hashes = '#'.repeat(level);
-                const text = (heading ? heading.textContent : node.textContent || '').trim();
-                return `\n\n${hashes} ${text}\n\n`;
-            }
-        });
-
-        this.prioritizeRule('cleanHeadings');
-        this.prioritizeRule('headingLinks');
-        this.prioritizeRule('linkedHeadings');
-
-        this.turndown.addRule('figure', {
-            filter: 'figure',
-            replacement: (content, node) => {
-                const img = node.querySelector('img');
-                const caption = node.querySelector('figcaption');
-
-                let markdown = '';
-                if (img) {
-                    const alt = img.getAttribute('alt') || '';
-                    const src = img.getAttribute('src') || '';
-                    if (self.options.stripImages) {
-                        const safeAlt = String(alt).trim().replace(/\s+/g, ' ');
-                        if (safeAlt) {
-                            markdown += `(Image: ${safeAlt})\n`;
-                        }
-                    } else {
-                        markdown += `![${alt}](${src})\n`;
-                    }
-                }
-                if (caption) {
-                    markdown += `*${caption.textContent.trim()}*\n`;
-                }
-
-                // Include any other converted content (e.g., code blocks inside figure)
-                if (content && content.trim()) {
-                    markdown += content.trim() + '\n';
-                }
-
-                return markdown + '\n';
-            }
-        });
-
-        this.turndown.remove(['script', 'style', 'noscript', 'iframe', 'object', 'embed', 'footer', 'nav']);
-
-        this.prioritizeRule('stripLinks');
-        this.prioritizeRule('stripImages');
     }
 
     async processPage(options) {
@@ -344,7 +135,7 @@ export class AdvancedMarkdownConverter {
 
         const originalBodyClone = document.body.cloneNode(true);
         const tabStateResult = this.preserveInteractiveState(originalBodyClone);
-        const prunedNoise = this.pruneNoiseElements(originalBodyClone);
+        const prunedNoise = pruneNoiseElements(originalBodyClone, (...args) => this.log(...args));
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
 
         try {
@@ -448,146 +239,6 @@ export class AdvancedMarkdownConverter {
      * detached from the document, so class-driven hiding (sr-only etc.)
      * cannot be computed here.
      */
-    pruneNoiseElements(root) {
-        const emptyCounts = {
-            hidden: 0,
-            ariaHidden: 0,
-            skipLinks: 0,
-            templates: 0,
-            trackers: 0,
-            shareWidgets: 0,
-            shareLinks: 0,
-            emptied: 0
-        };
-        if (!root) return emptyCounts;
-
-        const counts = { ...emptyCounts };
-        // KaTeX/MathJax mark their *rendered* output aria-hidden; stripping it
-        // would destroy math. The check walks all ancestors because real math
-        // trees nest aria-hidden spans with generic classes.
-        const mathish = /(^|[\s_-])(katex|mathjax|mjx|latex|math)([\s_-]|$)/i;
-        const isMathSubtree = (el) => {
-            for (let anc = el; anc && anc !== root; anc = anc.parentElement) {
-                if (mathish.test(anc.getAttribute?.('class') || '')) return true;
-                if (/^mjx-/i.test(anc.tagName || '')) return true;
-            }
-            return false;
-        };
-
-        root.querySelectorAll('template').forEach((el) => {
-            el.remove();
-            counts.templates += 1;
-        });
-
-        root.querySelectorAll('[hidden]').forEach((el) => {
-            el.remove();
-            counts.hidden += 1;
-        });
-
-        root.querySelectorAll('[style]').forEach((el) => {
-            const style = (el.getAttribute('style') || '').replace(/url\([^)]*\)/gi, '');
-            if (/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\b/i.test(style)) {
-                el.remove();
-                counts.hidden += 1;
-            }
-        });
-
-        // aria-hidden marks content invisible to screen readers, not to
-        // sighted users. Modal implementations (react-aria, Bootstrap) flip
-        // aria-hidden on the whole page wrapper behind a dialog – removing
-        // that would delete the real content. So: keep math trees, and keep
-        // any aria-hidden subtree that holds most of the page's text.
-        const totalTextLength = (root.textContent || '').length;
-        root.querySelectorAll('[aria-hidden="true"]').forEach((el) => {
-            if (isMathSubtree(el)) return;
-            const share = totalTextLength > 0 ? (el.textContent || '').length / totalTextLength : 0;
-            if (share > 0.5) return;
-            el.remove();
-            counts.ariaHidden += 1;
-        });
-
-        root.querySelectorAll('a').forEach((el) => {
-            const text = (el.textContent || '').trim();
-            if (/^skip to (the )?(main )?content$/i.test(text)) {
-                el.remove();
-                counts.skipLinks += 1;
-            }
-        });
-
-        // Tracking pixels and analytics beacon images. Dimension checks
-        // catch classic 1x1 bugs; src/class patterns catch the rest.
-        root.querySelectorAll('img').forEach((el) => {
-            const src = [
-                el.getAttribute('src'),
-                el.getAttribute('data-src'),
-                el.getAttribute('srcset'),
-                el.getAttribute('data-srcset')
-            ]
-                .filter(Boolean)
-                .join(' ');
-            const width = Number.parseInt(el.getAttribute('width') || '', 10);
-            const height = Number.parseInt(el.getAttribute('height') || '', 10);
-            const style = el.getAttribute('style') || '';
-            const tinyDeclared =
-                (width > 0 && width <= 2) ||
-                (height > 0 && height <= 2) ||
-                /(?:width|height)\s*:\s*[012]px\b/i.test(style);
-            const trackerClass =
-                /(?:^|[\s_.-])(?:track|tracker|beacon|pixel|analytics|impression)/i.test(
-                    `${el.getAttribute('class') || ''} ${el.id || ''}`
-                ) && !(el.getAttribute('alt') || '').trim();
-
-            if (tinyDeclared || TRACKER_IMG_PATTERN.test(src) || trackerClass) {
-                el.remove();
-                counts.trackers += 1;
-            }
-        });
-
-        // Share widgets: containers that only exist to repost the page.
-        root.querySelectorAll(SHARE_WIDGET_SELECTOR).forEach((el) => {
-            el.remove();
-            counts.shareWidgets += 1;
-        });
-
-        // Links to share/bookmark endpoints, regardless of container markup.
-        root.querySelectorAll('a[href]').forEach((el) => {
-            if (SHARE_HREF_PATTERN.test(el.getAttribute('href') || '')) {
-                el.remove();
-                counts.shareLinks += 1;
-            }
-        });
-
-        // Removing the links above leaves wrappers like <ul><li><i></i></li>
-        // </ul> that would emit stray "-" bullets. Sweep emptied containers,
-        // outermost passes first so nested shells collapse.
-        for (let pass = 0; pass < 4; pass += 1) {
-            let removedThisPass = 0;
-            root.querySelectorAll(EMPTIABLE_SELECTOR).forEach((el) => {
-                if (!root.contains(el)) return;
-                if ((el.textContent || '').trim() === '' && !el.querySelector(CONTENT_BEARING_SELECTOR)) {
-                    el.remove();
-                    removedThisPass += 1;
-                }
-            });
-            counts.emptied += removedThisPass;
-            if (removedThisPass === 0) break;
-        }
-
-        const total =
-            counts.hidden +
-            counts.ariaHidden +
-            counts.skipLinks +
-            counts.templates +
-            counts.trackers +
-            counts.shareWidgets +
-            counts.shareLinks +
-            counts.emptied;
-        if (total > 0) {
-            this.log('pruneNoiseElements removed', counts);
-        }
-        return counts;
-    }
-
     preserveInteractiveState(root) {
         if (!root) {
             return { tablistsProcessed: 0, panelsRemoved: 0 };
@@ -660,7 +311,7 @@ export class AdvancedMarkdownConverter {
 
         // Defuddle's output can still contain share widgets and tracking
         // pixels (its blocklist and small-image pass miss them).
-        this.pruneNoiseElements(body);
+        pruneNoiseElements(body, (...args) => this.log(...args));
 
         // Mermaid sources can live in the selected content or only in the
         // page's own payload (Next.js/SPA pages ship the original markdown
@@ -702,7 +353,7 @@ export class AdvancedMarkdownConverter {
                 continue;
             }
 
-            const language = this.detectLanguageForPre(pre);
+            const language = detectLanguageForPre(pre);
 
             const existingCodeElement = pre.querySelector('code');
             let codeText = (existingCodeElement?.textContent ?? pre.textContent ?? '');
@@ -736,131 +387,16 @@ export class AdvancedMarkdownConverter {
         return result;
     }
 
-    detectLanguageForPre(pre) {
-        const codeElement = pre.querySelector('code');
-        if (codeElement) {
-            return this.detectLanguage(codeElement);
-        }
-
-        const dataLang = pre.getAttribute('data-lang') || pre.getAttribute('data-language');
-        if (dataLang) return dataLang;
-
-        const preClass = pre.className || '';
-        const match = preClass.match(/language-(\w+)/) || preClass.match(/lang-(\w+)/);
-        if (match) return match[1];
-
-        return '';
-    }
-
     cleanupMarkdown(markdown) {
         return markdown.replace(/\n{4,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim();
     }
 
-    computeFence(code) {
-        const matches = code.match(/`+/g) || [];
-        const max = matches.reduce((acc, m) => Math.max(acc, m.length), 0);
-        return '`'.repeat(Math.max(3, max + 1));
-    }
-
-    detectLanguage(codeElement) {
-        let lang = codeElement.getAttribute('data-lang');
-        if (lang) return lang;
-
-        lang = codeElement.getAttribute('data-language');
-        if (lang) return lang;
-
-        const className = codeElement.className || '';
-        let match = className.match(/language-(\w+)/);
-        if (match) return match[1];
-
-        match = className.match(/lang-(\w+)/);
-        if (match) return match[1];
-
-        const parentPre = codeElement.closest('pre');
-        if (parentPre) {
-            lang = parentPre.getAttribute('data-lang') || parentPre.getAttribute('data-language');
-            if (lang) return lang;
-
-            const preClass = parentPre.className || '';
-            match = preClass.match(/language-(\w+)/) || preClass.match(/lang-(\w+)/);
-            if (match) return match[1];
-        }
-
-        return '';
-    }
-
-    /**
-     * @param {{element: Element, kind: string, wordCount?: number}} content
-     */
     extractMetadata(content) {
-        const doc = document;
-
-        const def = this.defuddleResult;
-
-        const titleFromMeta = this.getMeta(['og:title', 'twitter:title']);
-        const sourceFromMeta = this.getMeta(['og:site_name', 'twitter:site', 'application-name']);
-        const descriptionFromMeta = this.getMeta(['og:description', 'twitter:description', 'description']);
-        const authorFromMeta = this.getMeta(['author', 'article:author', 'twitter:creator']);
-
-        const metadata = {
-            title: def?.title || titleFromMeta || doc.title || 'Untitled',
-            url: window.location.href,
-            domain: def?.domain || window.location.hostname.replace('www.', ''),
-            source: sourceFromMeta || def?.siteName || def?.site || def?.publication || def?.domain || window.location.hostname.replace('www.', ''),
-            description: def?.description || descriptionFromMeta,
-            author: def?.author || authorFromMeta,
-            publishedDate: def?.published || this.getMeta(['article:published_time']),
-            tags: this.extractTags(),
-            wordCount: 0,
-            readingTime: 0
-        };
-
-        // Count what we actually ship — the selection, not the live document
-        // with all of its chrome. Defuddle's own count describes exactly the
-        // selection we ship (and counts CJK per character, better than a
-        // whitespace split); when we fell back to the page body we count the
-        // body ourselves.
-        const element = content?.element || doc.body;
-        const text = (element?.textContent || '') || '';
-        metadata.wordCount = Number.isFinite(content?.wordCount)
-            ? content.wordCount
-            : (text.trim() ? text.trim().split(/\s+/).length : 0);
-        metadata.readingTime = Math.ceil(metadata.wordCount / 200);
-
-        if (this.metadataOverrides) {
-            for (const [key, value] of Object.entries(this.metadataOverrides)) {
-                if (value == null) continue;
-                if (key === 'tags' && Array.isArray(value)) {
-                    metadata.tags = value.slice(0, 10);
-                    continue;
-                }
-                metadata[key] = value;
-            }
-        }
-
-        return metadata;
-    }
-
-    getMeta(names) {
-        for (const name of names) {
-            const el = document.querySelector(`meta[name="${name}"], meta[property="${name}"]`);
-            if (el && el.content) return el.content.trim();
-        }
-        return null;
-    }
-
-    extractTags() {
-        const tags = new Set();
-        const keywords = document.querySelector('meta[name="keywords"]');
-        if (keywords && keywords.content) {
-            keywords.content.split(',').forEach((t) => tags.add(t.trim()));
-        }
-
-        document.querySelectorAll('.tags a, a[rel="tag"]').forEach((el) => {
-            tags.add(el.textContent.trim());
+        return extractMetadata({
+            content,
+            defuddleResult: this.defuddleResult,
+            overrides: this.metadataOverrides
         });
-
-        return Array.from(tags).slice(0, 10);
     }
 
     sendToBackground(markdown, metadata) {
@@ -868,15 +404,6 @@ export class AdvancedMarkdownConverter {
             type: 'DOWNLOAD_MARKDOWN',
             data: { markdown, metadata, options: this.options }
         });
-    }
-
-    prioritizeRule(name) {
-        const rulesArray = this.turndown.rules.array;
-        const index = rulesArray.findIndex((rule) => rule.key === name);
-        if (index > 0) {
-            const [rule] = rulesArray.splice(index, 1);
-            rulesArray.unshift(rule);
-        }
     }
 
     log(...args) {
