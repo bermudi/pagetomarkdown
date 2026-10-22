@@ -44,3 +44,31 @@ jobs:
 
       - name: Lint extension (web-ext)
         run: npx --yes web-ext lint --source-dir .
+
+  # Installs the extension in Firefox, clicks its toolbar button on a real
+  # page and checks the downloaded file. ubuntu-22.04 on purpose: Ubuntu
+  # 24.04 ships Firefox as a snap, which cannot use a custom profile dir.
+  e2e-firefox:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension
+        run: pnpm run build
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Firefox end-to-end check
+        run: uv run --with marionette_driver python tests/e2e/firefox_e2e.py

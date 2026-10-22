@@ -130,6 +130,32 @@ sidebars included, with frontmatter that still described the small selection.
   should feed the article container directly (`mode: 'content'` in the
   harness) instead of pinning happy-dom's guess.
 
+## Firefox end-to-end (2026-10-22)
+
+`tests/e2e/firefox_e2e.py` is the only check that covers the whole chain:
+add-on installed → toolbar button clicked → content script → background
+script → file on disk.
+
+    pnpm build && uv run --with marionette_driver python tests/e2e/firefox_e2e.py
+
+- `marionette_driver` is installed on the fly by `uv`; there is no geckodriver
+  and no selenium — Marionette talks to Firefox directly.
+- The chrome context needs `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` **in the
+  environment at launch**; without it `set_context(CHROME)` fails with
+  "System access is required".
+- The toolbar button lives in Firefox's unified extensions panel: click
+  `#unified-extensions-button`, then the extension's `_<addon-id>_-BAP`
+  widget (the id has the braces stripped).
+- Content scripts are only injected into tabs opened **after** the add-on was
+  installed — install first, navigate second.
+- `user_pref` values that are strings must be quoted, or Firefox refuses to
+  parse the profile and silently ignores the pref (this cost an hour of
+  "the download never happened").
+- The content script's `window.markdownConverter` is **not visible** from
+  Marionette's content context: content scripts live in an isolated world.
+  Drive the extension through its UI (or the background page), not through
+  the page's `window`.
+
 ## Misc
 
 - Firefox temp add-ons (about:debugging) do not inject content scripts into
