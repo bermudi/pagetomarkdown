@@ -206,6 +206,26 @@ describe('applyMermaidToDoc', () => {
         expect(doc.body.querySelector('svg')).toBeNull();
         expect(doc.body.querySelector('img')).not.toBeNull();
     });
+
+    it('does not hand a duplicated source to a second svg of the same kind', () => {
+        // The selection and the page payload both carry the first fence, so
+        // the pool would hold it twice without deduping. The type-based
+        // fallback walks the pool by index and would then pair the *same*
+        // source with both SVGs, stranding the second diagram's source.
+        const first = '```mermaid\ngraph TD\n  Loader["Loader"] --> Renderer["Renderer"]\n```';
+        const second = '```mermaid\ngraph TD\n  Parser["Parser"] --> Printer["Printer"]\n```';
+        const doc = parse(
+            '<div><svg class="mermaid flowchart"></svg><svg class="mermaid flowchart"></svg></div>'
+        );
+        const ctx = createMermaidContext(`${first}\n${first}\n${second}`);
+        const stats = applyMermaidToDoc(doc, ctx);
+
+        expect(ctx.sources).toHaveLength(2);
+        expect(stats.svgReplaced).toBe(2);
+        const fenced = doc.body.querySelectorAll('code.language-mermaid');
+        expect(fenced[0].textContent).toContain('Loader');
+        expect(fenced[1].textContent).toContain('Parser');
+    });
 });
 
 describe('rescueMissingDiagrams', () => {

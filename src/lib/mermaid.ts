@@ -29,9 +29,11 @@ export const MERMAID_KEYWORDS = new Set([
     'default', 'participant', 'actor', 'note', 'loop', 'alt', 'else', 'opt'
 ]);
 
-// Minimum overlap for a label match to be trusted. Verified margins on the
-// DeepWiki page were 0.86 / 0.58 / 1.0 / 1.0 for the true sources versus
-// <=0.5 for the runners-up.
+// Minimum overlap for a match to be trusted. Measured on the real DeepWiki
+// page: the label score puts the true source at 1.00 against runners-up of
+// 0.20–0.33, and the identifier fallback puts it at 0.74–0.92 against
+// 0.28–0.33 — the bar sits inside both gaps. Numbers are kept honest in the
+// scoreMermaidSourceByText docstring; update the two together.
 const MATCH_SCORE_THRESHOLD = 0.5;
 const MIN_MATCH_HITS = 2;
 
@@ -460,7 +462,11 @@ export interface MermaidStats {
  */
 export function createMermaidContext(pageHtml: string): MermaidContext {
     return {
-        sources: collectMermaidSources(pageHtml),
+        // The selection HTML and the page payload overlap, so a fence that
+        // survived extraction arrives twice. pickMermaidSourceForSvg walks
+        // this list by index; a duplicate would hand the same source to a
+        // second SVG and strand the real one.
+        sources: [...new Set(collectMermaidSources(pageHtml))],
         consumed: new Set(),
         used: new Set()
     };
