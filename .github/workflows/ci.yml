@@ -49,10 +49,9 @@ jobs:
           echo "package.json version: $PKG_VER"
 
       - name: Lint extension (web-ext)
-        # Same ignore list as the publish workflow: lint what actually ships.
-        run: |
-          npx --yes web-ext lint --source-dir . \
-            --ignore-files "web-ext-artifacts/**" "node_modules/**" ".git/**" ".github/**" "*.zip" "*.xpi" "tools/**" "tests/**" "src/**" "scripts/**" "ROADMAP.md" "pnpm-lock.yaml" "pnpm-workspace.yaml" "vite.*.config.js" "build_zip.sh" "tsconfig.json" "eslint.config.js" "vitest.config.js" "package.json" "LICENSE" "README.md" "AGENTS.md" "icons/*.xcf"
+        # The ignore list lives in web-ext-config.mjs and is shared with the
+        # publish workflow, so this is exactly the lint a release gets.
+        run: npx --yes web-ext lint --source-dir .
 
   # Installs the extension in Firefox, clicks its toolbar button on a real
   # page and checks the downloaded file. ubuntu-22.04 on purpose: Ubuntu

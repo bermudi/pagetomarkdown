@@ -53,6 +53,8 @@ jobs:
         run: pnpm run build
 
       - name: Lint extension
+        # Uses the shared ignore list in web-ext-config.mjs — the same lint
+        # CI runs on every push.
         run: npx --yes web-ext lint --source-dir .
 
       - name: Sign and publish to AMO
@@ -65,13 +67,13 @@ jobs:
             exit 1
           fi
           # --channel listed = public listing on AMO
-          # Mirrors build_zip.sh: only manifest + dist + icons go to the store.
-          # This keeps the XPI small and avoids lint noise from src/test files.
+          # Packages exactly manifest + dist + icons: the shared ignore list
+          # lives in web-ext-config.mjs (mirrors build_zip.sh, and is the
+          # same list CI lints with on every push).
           npx --yes web-ext sign \
             --source-dir . \
             --artifacts-dir web-ext-artifacts \
-            --channel listed \
-            --ignore-files "web-ext-artifacts/**" "node_modules/**" ".git/**" ".github/**" "*.zip" "*.xpi" "tools/**" "tests/**" "ROADMAP.md" "pnpm-lock.yaml" "pnpm-workspace.yaml" "vite.*.config.js" "build_zip.sh" "src/**" "package.json" "LICENSE" "README.md" "icons/*.xcf"
+            --channel listed
 
       - name: Upload signed XPI artifact
         uses: actions/upload-artifact@v4
