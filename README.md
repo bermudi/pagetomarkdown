@@ -21,7 +21,8 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
 - **High‑quality Markdown**
   Uses `turndown` + GFM plugin with custom rules for:
   - Fenced code blocks, including language hints from `language-*`, `data-lang`, `data-language`, and `lang-*`
-  - Mermaid diagrams: `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI. Rendered diagrams dissolved to CSS+label text inside `<pre>` wrappers (DeepWiki-style) are recovered by matching ` ```mermaid ` sources embedded in the page (e.g. Next.js RSC payloads) against the surviving labels; unmatched ones become a `> **Diagram:** …` blockquote with the extracted labels
+  - Mermaid diagrams (`src/lib/mermaid.js`): `<svg id="mermaid-...">` with `data-source` or nearby ` ```mermaid ` source → fenced ` ```mermaid `; otherwise a placeholder or `data:image/svg+xml` data URI. Rendered diagrams dissolved to CSS+label text inside `<pre>` wrappers (DeepWiki-style) are recovered by matching ` ```mermaid ` sources embedded in the page (e.g. Next.js RSC payloads) against the surviving labels; unmatched ones become a `> **Diagram:** …` blockquote with the extracted labels. A diagram the extractor dropped entirely is recovered from the page and placed back after the heading it belongs to.
+  - Tables compressed into a code block (`| a | b ||| --- | --- ||| 1 | 2 |`) → a real markdown table (`src/lib/compressedTables.js`)
   - Headings: `## [Link](#anchor)` and `<a><h3>…</h3></a>` → `## Link`
   - Figures and captions (`<figure>`, `<figcaption>`) → image + italic caption
   - Pruned noise elements (`script`, `style`, `noscript`, `iframe`, `object`, `embed`, `footer`, `nav`, …)
@@ -52,8 +53,9 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
    - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing, and finally clicks "Show transcript" in the page UI itself and scrapes the rendered panel (YouTube returns empty bodies for caption URLs that lack a proof-of-origin token, so the page's own attested transcript machinery is often the only working path).
    - Else tries Claude.ai conversation transcript (`claude.ai`/`claude.com` chat `transcript-row` messages), Poe conversation transcript (`poe.com` chat messages) and Reddit thread extractor (`old.reddit.com` via `#siteTable .thing.link`; modern `shreddit` UI falls through).
    - Else clones `document.body`, runs `preserveActiveTabs`, prunes invisible chrome (`pruneNoiseElements`), passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks or returns a near-empty selection.
+   - Keeps the result as **one** content object (`{ element, html, kind }`): the markdown and the word count are both derived from it, so they can never describe different documents.
    - Collects metadata from `defuddle` result + meta tags.
-   - Converts the resulting HTML to Markdown via `TurndownService` + GFM, after `normalizeContentHtml` preprocessing (mermaid SVG → `pre.language-mermaid`, `pre` → normalized `code` with language).
+   - Converts the resulting HTML to Markdown via `TurndownService` + GFM, after `normalizeContentHtml` preprocessing (mermaid SVG → `pre.language-mermaid`, compressed tables → real `<table>`, `pre` → normalized `code` with language).
 4. `content.js` posts `{ markdown, metadata }` back via `browser.runtime.sendMessage`.
 5. `background.js` builds YAML frontmatter, generates a safe filename, creates a `Blob` URL, and calls `browser.downloads.download`.
 
@@ -109,10 +111,10 @@ No other permissions (cookies, history, storage sync, remote servers, etc.) are 
 
 For auditing, the main logic lives in:
 
-- `src/content.js` — extraction, cleanup, mermaid/code normalization, and Markdown conversion
+- `src/content.js` — pipeline orchestration: extraction, cleanup, and Markdown conversion
 - `src/background.js` — frontmatter generation, filename sanitization, and file download
 - `src/options.{js,html,css}` — default mode and debug toggle
-- `src/lib/redditExtractor.js`, `src/lib/claudeExtractor.js`, `src/lib/tabState.js`, `src/lib/youtubeTranscript.js` — site-specific extractors
+- `src/lib/` — site-specific extractors (`redditExtractor`, `claudeExtractor`, `poeExtractor`), mermaid handling (`mermaid`), compressed-table repair (`compressedTables`), tab state (`tabState`), YouTube transcripts (`youtubeTranscript`)
 - `dist/` — bundled output from Vite (see `vite.*.config.js`)
 
 ---
@@ -121,7 +123,8 @@ For auditing, the main logic lives in:
 
 - **Manifest:** `manifest.json` (Manifest V2 for Firefox; `version` synced from `package.json` at build/publish time — `package.json` is the source of truth)
 - **Build:** Vite with three configs (`vite.content.config.js`, `vite.background.config.js`, `vite.options.config.js`) → `dist/`; `sourcemap: mode !== 'production'` so `pnpm dev` keeps maps and `pnpm build` drops them
-- **Tests:** `vitest` + `happy-dom` (`pnpm test`) — covers Reddit extractor, tab state, code/mermaid/heading pipeline, frontmatter/filename edge cases, and `pickBestTrack`
+- **Tests:** `vitest` + `happy-dom` (`pnpm test`) — site extractors, tab state, mermaid handling, compressed tables, the code/mermaid/heading pipeline, frontmatter/filename edge cases, and `pickBestTrack`
+- **Golden files:** `src/pipeline.test.js` runs whole pages through the pipeline and compares against `tests/fixtures/pipeline/*.expected.md` (real captured pages: a mermaid.js.org article and a DeepWiki page). Regenerate with `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`
 - **Lint:** `eslint` (`pnpm run lint`; also `web-ext lint` in CI)
 - **Packaging:** `build_zip.sh` stages a version-patched `manifest.json` in a temp dir and zips `manifest.json` + `dist` + `icons` → `pagetomd-*.zip` (never mutates the tracked `manifest.json`)
 
@@ -132,7 +135,7 @@ Typical dev loop:
 3. Reload the extension from `about:debugging` → **This Firefox** → **Reload**.
 4. Open a page, click the icon, and — if "Enable debug logging" is on — inspect the console for `[PageToMD]` diagnostics.
 
-DeepWiki post-processing: see `tools/README.md` (`tools/fix_deepwiki.py` patches downloaded markdown for compressed tables, mangled mermaid CSS, and broken `data:image/svg+xml` images).
+DeepWiki pages are handled inside the extension: the diagram source is recovered from the page payload and emitted as a fenced ` ```mermaid ` block. `tests/fixtures/pipeline/deepwiki.html` is a real captured DeepWiki page used as a regression fixture.
 
 ---
 

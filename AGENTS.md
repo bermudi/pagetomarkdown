@@ -64,26 +64,71 @@ The landscape, after a full day of archaeology:
 
 ## Mermaid / rendered-diagram salvage (verified 2026-10-21, DeepWiki)
 
+All of this lives in `src/lib/mermaid.js` now (it was 376 lines inside
+`content.js`); `content.js` only orchestrates it.
+
 - DeepWiki renders ` ```mermaid ` code blocks inside `<pre>` wrappers; mermaid.js
   replaces the code text with the rendered `<svg id="mermaid-…">`.
 - **defuddle strips `id`, `class`, and `aria-*` attributes** (not in its
   `ALLOWED_ATTRIBUTES`) and dissolves the svg into raw text → the `pre` keeps
   `<code>#mermaid-x{…css…}GluedLabelText</code>`. The old `svg[id^="mermaid-"]`
   detector sees nothing; the fenced-`pre` rule then emits the CSS blob.
-- The original diagram source survives in `document.body.innerHTML` inside
-  Next.js RSC `<script>` payload strings (`self.__next_f.push`, `\n`-escaped —
-  `extractMermaidBlocksFromRawHtml` already decodes it). defuddle output never
-  contains it.
+- The original diagram source survives in the page payload — Next.js RSC
+  `<script>` strings (`self.__next_f.push`, `\n`-escaped — the collector
+  decodes it). defuddle output never contains it.
 - Matching: score each ` ```mermaid ` candidate by fraction of its identifier
   tokens (labels/paths) present in the remnant text. Verified margins: 0.86 /
   0.58 / 1.0 / 1.0 correct vs ≤0.5 runners-up on the live page.
-- happy-dom **loses `<script>` text on `innerHTML` read-back** — tests must
-  stub `document.body.innerHTML` to exercise the page-payload path.
+- A mermaid SVG rendered by mermaid v10+ has **no text nodes**: the labels
+  live in `<foreignObject>` HTML, so `svg.textContent` is empty and label
+  matching cannot work on the live SVG — only on the *dissolved* remnant.
+  The type-based fallback (graph/state/sequence + document order) is what
+  pairs a live SVG with a source.
+- happy-dom v20 **preserves** `<script>` text through an `innerHTML`
+  round-trip (verified 2026-10-22; older notes here claimed otherwise —
+  the pipeline reads the payload from `document.body.innerHTML` *and* from
+  the live `<script>` elements).
 - Firefox+Marionette e2e: `--marionette --profile <existing-dir>
   --new-instance --no-remote`, `Addons(client).install(repo, temp=True)`, then
   chrome context needs `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` *at launch*; click
   `_<id>_-BAP` in `#unified-extensions-view` after opening
   `unified-extensions-button`. Works headless (`-headless`) too.
+
+## One content object, one truth (2026-10-22)
+
+The pipeline used to keep the extracted content twice: `extractMainContent()`
+returned a DOM element while `convertToMarkdown()` read a separate
+`this.defuddleHtml` string. When the two disagreed, the converter swapped the
+selection for `document.body.innerHTML` — the whole live page, nav bars and
+sidebars included, with frontmatter that still described the small selection.
+
+- `extractMainContent()` now returns **one** object: `{ element, html, kind }`.
+  The markdown and the word count are both derived from it.
+- **Rule: the live page may be read to *discover sources* (diagram code,
+  captions), never as *content*.** If a diagram is missing from the
+  selection, recover the diagram — not the page.
+- A diagram the extractor dropped is rescued from the page and injected after
+  the heading it sat under (`rescueMissingDiagrams`), not appended blindly.
+
+## Fixtures and golden files (2026-10-22)
+
+- `src/pipeline.test.js` runs whole pages through the pipeline and compares
+  against `tests/fixtures/pipeline/*.expected.md`. Regenerate with
+  `UPDATE_GOLDEN=1 pnpm vitest run src/pipeline.test.js`.
+- **Capture real pages, don't invent them.** `agent-browser` (headless
+  Chrome) gets pages that `curl` cannot — DeepWiki serves a Vercel security
+  checkpoint to plain requests but renders fine in a browser.
+  `agent-browser eval "document.documentElement.outerHTML"` dumps the
+  rendered DOM.
+- Store the **dissolved** diagram form in fixtures, not the live SVG: a
+  36KB mermaid SVG with `foreignObject` labels does not survive happy-dom's
+  parser (a 78KB fixture parsed down to 22KB, losing everything after the
+  `<pre>`). Replacing the SVG with its own `textContent` (what defuddle
+  leaves behind) is both smaller and faithful to what the extension sees.
+- Defuddle's element picking needs layout metrics, so happy-dom picks
+  different elements than Firefox. Fixtures that depend on the *selection*
+  should feed the article container directly (`mode: 'content'` in the
+  harness) instead of pinning happy-dom's guess.
 
 ## Misc
 
@@ -98,3 +143,7 @@ The landscape, after a full day of archaeology:
   the AMO copy; "Temporary Extension" label is the tell.
 - `pnpm lint && pnpm test && pnpm build` must pass before commits;
   `eslint.config.js` lists browser globals explicitly (add new ones there).
+  Test files run in Node, so they get their own globals block there.
+- `tools/fix_deepwiki.py` is **gone** (2026-10-22): the DeepWiki repairs moved
+  into the extension (mermaid recovery, compressed-table repair, no more
+  broken `data:image/svg+xml` diagrams). Git history keeps it for old files.

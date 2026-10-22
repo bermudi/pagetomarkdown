@@ -189,6 +189,15 @@ export function isMermaidSvg(svg) {
     );
 }
 
+/**
+ * Mermaid renders a diagram it could not parse as an SVG containing the
+ * error message. Embedding that as an image ships a picture of an error.
+ */
+export function isMermaidErrorSvg(svgElement) {
+    const text = svgElement?.textContent || '';
+    return /syntax error|mermaid version|error rendering/i.test(text);
+}
+
 export function svgToDataUri(svgElement) {
     try {
         const serializer = new XMLSerializer();
@@ -380,6 +389,15 @@ export function applyMermaidToDoc(doc, ctx) {
         }
 
         if (!source) {
+            if (isMermaidErrorSvg(svg)) {
+                // The page's renderer could not parse the diagram — say so
+                // instead of embedding a picture of an error message.
+                const note = doc.createElement('p');
+                note.textContent = '[Mermaid diagram omitted: the page could not render it]';
+                svg.replaceWith(note);
+                stats.svgPlaceholder += 1;
+                continue;
+            }
             const dataUri = svgToDataUri(svg);
             if (dataUri) {
                 const img = doc.createElement('img');

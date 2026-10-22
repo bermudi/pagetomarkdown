@@ -7,8 +7,8 @@ Current planning is tracked in **GitHub Issues** — see the `bermudi/pagetomark
 - **#15** Reddit extractor modern-UI fallback — fixed to return `null` and let `defuddle` handle modern `shreddit` pages
 - **#14** Dead code (mermaid duplicate, placeholder swap, `preferredLang`) — removed
 - **#12** Console spam + debug toggle — gated via `this.log()` / `ytLog` and cheaper YouTube key extraction
-- **#16** DeepWiki: decision between in-extension mermaid handling vs `tools/fix_deepwiki.py` post-processor — kept as `tools/` with fixtures (Option B)
-- **#13** Tests for core pipeline — added `vitest` + `happy-dom` fixtures for code/mermaid/headings, frontmatter/filename, `pickBestTrack`
+- **#16** DeepWiki: fixed in the extension (Option A) — the diagram source is recovered from the page payload and emitted as a fenced ` ```mermaid ` block, compressed tables are repaired into real tables, and the `tools/fix_deepwiki.py` post-processor was deleted. `tests/fixtures/pipeline/deepwiki.html` is a real captured DeepWiki page used as a regression fixture.
+- **#13** Tests for core pipeline — added `vitest` + `happy-dom` fixtures for code/mermaid/headings, frontmatter/filename, `pickBestTrack`, plus a golden-file harness (`src/pipeline.test.js`) over real captured pages
 - **#18** Version source of truth — `package.json` is source; `build_zip.sh` stages a patched manifest, CI guards against drift
 - **#19** Static analysis & source maps — `eslint` + `pnpm run lint`, `sourcemap: mode !== 'production'` so prod `dist` ships without maps
 - **#17** Docs & stray files — README/ROADMAP refreshed, `tools/README.md`, `*.xcf` ignored, `pagetomd-*.zip` not tracked

@@ -3,6 +3,7 @@ import Defuddle from 'defuddle';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
 import { extractClaudeConversation } from './lib/claudeExtractor';
+import { buildTableElement, parseCompressedTable } from './lib/compressedTables';
 import {
     applyMermaidToDoc,
     createMermaidContext,
@@ -692,6 +693,14 @@ export class AdvancedMarkdownConverter {
 
         for (const pre of pres) {
             if (!body.contains(pre)) continue;
+
+            // Some generators compress a markdown table into a code block.
+            // Repair it into a real table instead of shipping pipes.
+            const compressed = parseCompressedTable(pre.textContent || '');
+            if (compressed) {
+                pre.replaceWith(buildTableElement(doc, compressed));
+                continue;
+            }
 
             const language = this.detectLanguageForPre(pre);
 
