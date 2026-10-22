@@ -74,6 +74,46 @@ export function unescapeEmbeddedText(text) {
 /*  Label matching                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The labels a mermaid source puts on its nodes — the text a renderer
+ * keeps and a dissolved diagram leaves behind.
+ *
+ * `A["Workbench UI"]`, `A(Label)`, `A{Label}`, `A[["Label"]]`, `A[("Label")]`
+ * and edge labels (`A -->|Creates| B`) all count.
+ */
+const LABEL_PATTERNS = [
+    /\[\[\s*"([^"]{2,})"\s*\]\]/g,
+    /\[\(\s*"([^"]{2,})"\s*\)\]/g,
+    /\{\{\s*"([^"]{2,})"\s*\}\}/g,
+    /\[\s*"([^"]{2,})"\s*\]/g,
+    /\(\s*"([^"]{2,})"\s*\)/g,
+    /\{\s*"([^"]{2,})"\s*\}/g,
+    /\[\s*([^]"\n|]{2,})\s*\]/g,
+    /\(\s*([^)"\n|]{2,})\s*\)/g,
+    /\{\s*([^}"\n|]{2,})\s*\}/g,
+    /\|([^|\n]{2,})\|/g
+];
+
+export function mermaidSourceLabels(source) {
+    if (!source) return [];
+    const found = new Set();
+    for (const pattern of LABEL_PATTERNS) {
+        const re = new RegExp(pattern.source, 'g');
+        let match;
+        while ((match = re.exec(source))) {
+            const label = normalizeLabel(match[1]);
+            if (label) found.add(label);
+        }
+    }
+    return [...found];
+}
+
+// Markup the source may carry around a label ("**bold**") but the renderer
+// drops.
+function normalizeLabel(label) {
+    return (label || '').replace(/[*_`~]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export function mermaidCandidateTokens(source) {
     const tokens = new Set();
     const re = /[A-Za-z][A-Za-z0-9_]*(?:[./][A-Za-z0-9_./-]+)*/g;
@@ -88,40 +128,75 @@ export function mermaidCandidateTokens(source) {
 }
 
 /**
- * Score a source by the fraction of its identifier tokens visible in
- * `haystack` (an SVG's text content or a mangled code blob). Node labels
- * and paths survive rendering, so the true source scores far above
- * lookalikes.
+ * Score a source by how much of it survives rendering.
+ *
+ * Two signals:
+ *   - **labels** — the node labels a renderer keeps verbatim. This is the
+ *     sharp signal: a dissolved diagram *is* its labels, concatenated.
+ *   - **identifiers** — every token in the source. Diluted by edge labels,
+ *     subgraph ids and node ids that the renderer never shows.
+ *
+ * Measured on a real DeepWiki page (266 candidate sources, 3 diagrams): the
+ * label score picked the right source every time with a score of 1.00
+ * against a runner-up of 0.20–0.33, while the identifier score gave
+ * 0.74–0.92 against 0.28–0.33. Labels win when a source has them.
  */
-export function scoreMermaidSourceByText(haystack, source) {
+export function scoreMermaidSourceByText(haystack, source, metric = 'label') {
     if (!haystack || !source) return { score: 0, hits: 0 };
-    const toks = mermaidCandidateTokens(source);
-    if (!toks.size) return { score: 0, hits: 0 };
 
-    let hits = 0;
-    for (const t of toks) {
-        if (haystack.includes(t)) hits += 1;
+    const labels = mermaidSourceLabels(source);
+    let labelHits = 0;
+    for (const label of labels) {
+        if (haystack.includes(label)) labelHits += 1;
     }
-    return { score: hits / toks.size, hits };
+    const labelScore = labels.length ? labelHits / labels.length : 0;
+
+    const toks = mermaidCandidateTokens(source);
+    let tokenHits = 0;
+    for (const t of toks) {
+        if (haystack.includes(t)) tokenHits += 1;
+    }
+    const tokenScore = toks.size ? tokenHits / toks.size : 0;
+
+    const useLabels = metric === 'label' && labels.length >= 2;
+    return {
+        score: useLabels ? labelScore : tokenScore,
+        hits: useLabels ? labelHits : tokenHits,
+        labelScore,
+        labelHits,
+        tokenScore,
+        tokenHits
+    };
 }
 
 /**
  * Pick the source that best explains `haystack`. Returns an empty string
  * when nothing clears the confidence bar.
+ *
+ * Labels are the primary signal; when no candidate clears the bar on
+ * labels (a diagram whose labels are only partly rendered), the identifier
+ * score gets a second chance.
  */
 export function matchMermaidSourceByText(haystack, candidates, consumed) {
-    const best = rankMermaidSourcesByText(haystack, candidates, consumed)[0];
-    if (!best) return '';
-    if (best.score < MATCH_SCORE_THRESHOLD || best.hits < MIN_MATCH_HITS) return '';
-    return best.source;
+    const byLabel = rankMermaidSourcesByText(haystack, candidates, consumed, 'label')[0];
+    if (byLabel && byLabel.score >= MATCH_SCORE_THRESHOLD && byLabel.hits >= MIN_MATCH_HITS) {
+        return byLabel.source;
+    }
+
+    const byToken = rankMermaidSourcesByText(haystack, candidates, consumed, 'token')[0];
+    if (byToken && byToken.score >= MATCH_SCORE_THRESHOLD && byToken.hits >= MIN_MATCH_HITS) {
+        return byToken.source;
+    }
+
+    return '';
 }
 
-export function rankMermaidSourcesByText(haystack, candidates, consumed) {
+export function rankMermaidSourcesByText(haystack, candidates, consumed, metric = 'label') {
     if (!haystack || !candidates?.length) return [];
     const ranked = [];
     for (const cand of candidates) {
         if (!cand || consumed?.has(cand)) continue;
-        const { score, hits } = scoreMermaidSourceByText(haystack, cand);
+        const { score, hits } = scoreMermaidSourceByText(haystack, cand, metric);
         if (hits === 0) continue;
         ranked.push({ source: cand, score, hits });
     }

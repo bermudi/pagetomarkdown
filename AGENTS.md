@@ -76,9 +76,15 @@ All of this lives in `src/lib/mermaid.js` now (it was 376 lines inside
 - The original diagram source survives in the page payload — Next.js RSC
   `<script>` strings (`self.__next_f.push`, `\n`-escaped — the collector
   decodes it). defuddle output never contains it.
-- Matching: score each ` ```mermaid ` candidate by fraction of its identifier
-  tokens (labels/paths) present in the remnant text. Verified margins: 0.86 /
-  0.58 / 1.0 / 1.0 correct vs ≤0.5 runners-up on the live page.
+- Matching: score each ` ```mermaid ` candidate by the **node labels** it
+  declares — a dissolved diagram *is* its labels, concatenated. Measured on a
+  real DeepWiki page (266 candidate sources, 3 diagrams): the label score
+  picked the right source every time with 1.00 against a runner-up of
+  0.20–0.33 (margin 0.67–0.80), while the old identifier score gave
+  0.74–0.92 against 0.28–0.33 (margin 0.41–0.59). Identifiers are the
+  fallback for diagrams whose labels are only partly rendered.
+  `tests/fixtures/mermaid/deepwiki-diagram-match.json` holds the real remnant
+  and its decoys as a regression fixture.
 - A mermaid SVG rendered by mermaid v10+ has **no text nodes**: the labels
   live in `<foreignObject>` HTML, so `svg.textContent` is empty and label
   matching cannot work on the live SVG — only on the *dissolved* remnant.

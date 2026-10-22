@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
     applyMermaidToDoc,
@@ -8,7 +10,10 @@ import {
     extractMermaidSourceFromSvg,
     isMermaidGarbageText,
     matchMermaidSourceByText,
+    mermaidSourceLabels,
+    rankMermaidSourcesByText,
     rescueMissingDiagrams,
+    scoreMermaidSourceByText,
     sourceExplainsLabels
 } from './mermaid.js';
 
@@ -86,6 +91,55 @@ describe('sourceExplainsLabels', () => {
         const loader = 'graph TD\n  Loader["Loader"] --> Renderer["Renderer"]';
         expect(sourceExplainsLabels(loader, 'LoaderRenderer')).toBe(true);
         expect(sourceExplainsLabels(loader, 'SomethingElse')).toBe(false);
+    });
+});
+
+describe('mermaidSourceLabels', () => {
+    it('extracts quoted node labels', () => {
+        const source = 'graph TD\n  CodeMain["CodeMain"] --> Ext["Extension Host"]';
+        expect(mermaidSourceLabels(source)).toEqual(
+            expect.arrayContaining(['CodeMain', 'Extension Host'])
+        );
+    });
+
+    it('extracts edge labels', () => {
+        const source = 'graph TD\n  A -->|Creates| B["B"]';
+        expect(mermaidSourceLabels(source)).toContain('Creates');
+    });
+
+    it('strips markup around a label', () => {
+        expect(mermaidSourceLabels('graph TD\n  A["**bold** label"]')).toContain('bold label');
+    });
+});
+
+describe('scoreMermaidSourceByText', () => {
+    it('scores a source whose labels survive rendering', () => {
+        const source = 'graph TD\n  CodeMain["CodeMain"] --> Ext["Extension Host"]';
+        const { score, hits } = scoreMermaidSourceByText('CodeMainExtension Host', source);
+        expect(score).toBe(1);
+        expect(hits).toBe(2);
+    });
+
+    it('prefers matching labels over matching identifiers', () => {
+        // The decoy shares every identifier with the real diagram but has
+        // different labels: identifiers alone cannot separate them, labels
+        // can.
+        const real = 'graph TD\n  Loader["Loader"] --> Renderer["Renderer"]';
+        const decoy = 'graph TD\n  Loader["Loader Service"] --> Renderer["Renderer Service"]';
+
+        expect(scoreMermaidSourceByText('LoaderRenderer', real).score).toBe(1);
+        expect(scoreMermaidSourceByText('LoaderRenderer', decoy).score).toBe(0);
+    });
+
+    it('falls back to identifiers when a source has no labels', () => {
+        const source = 'graph TD\n  Loader --> Renderer';
+        const { score } = scoreMermaidSourceByText('LoaderRenderer', source);
+        expect(score).toBe(1);
+    });
+
+    it('gives a wrong diagram a low score', () => {
+        const source = 'graph TD\n  Database["Database"] --> Cache["Cache"]';
+        expect(scoreMermaidSourceByText('LoaderRenderer', source).score).toBe(0);
     });
 });
 
@@ -198,5 +252,32 @@ describe('rescueMissingDiagrams', () => {
         const selectionDoc = parse('<p>nothing here</p>');
         const stats = rescueMissingDiagrams({ liveDoc, selectionDoc, ctx: createMermaidContext('') });
         expect(stats.injected).toBe(0);
+    });
+});
+
+describe('diagram matching on real page data', () => {
+    // Captured from deepwiki.com/microsoft/vscode: the dissolved remnant of
+    // one diagram plus candidate sources from the same page (the true one
+    // and three decoys that share identifiers with it).
+    const data = JSON.parse(
+        readFileSync(resolve('tests/fixtures/mermaid/deepwiki-diagram-match.json'), 'utf8')
+    );
+
+    it('picks the true source', () => {
+        expect(matchMermaidSourceByText(data.remnant, data.sources)).toBe(data.expected);
+    });
+
+    it('separates the true source from the decoys', () => {
+        const ranked = rankMermaidSourcesByText(data.remnant, data.sources);
+        expect(ranked[0].source).toBe(data.expected);
+        expect(ranked[0].score).toBe(1);
+        expect(ranked[0].score - ranked[1].score).toBeGreaterThan(0.5);
+    });
+
+    it('still finds it when the labels are only partly rendered', () => {
+        // The identifier score is the fallback when no candidate clears the
+        // bar on labels.
+        const partial = data.remnant.replace('Remote Extension Host (REH)', '');
+        expect(matchMermaidSourceByText(partial, data.sources)).toBe(data.expected);
     });
 });
