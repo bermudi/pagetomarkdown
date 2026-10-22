@@ -84,4 +84,20 @@ describe('core conversion pipeline (golden files)', () => {
     });
     expectGolden('docs-shell', markdown);
   });
+
+  // Real DeepWiki page (deepwiki.com/microsoft/vscode), captured from a live
+  // browser. Defuddle dissolves the rendered diagram into CSS + glued labels,
+  // so the source has to be recovered from the page payload.
+  it('converts a DeepWiki page and recovers its diagram', () => {
+    const markdown = runFixture(converter, {
+      file: 'deepwiki.html',
+      url: 'https://deepwiki.com/microsoft/vscode',
+      mode: 'content'
+    });
+    expect(markdown).toContain('```mermaid');
+    expect(markdown).toContain('CodeMain["CodeMain"]');
+    expect(markdown).not.toContain('edge-animation-frame');
+    expect(markdown).not.toContain('@keyframes');
+    expectGolden('deepwiki', markdown);
+  });
 });
