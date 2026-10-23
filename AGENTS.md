@@ -184,7 +184,10 @@ script → file on disk.
   commits; `eslint.config.js` lists browser globals explicitly (add new ones
   there). Test files run in Node, so they get their own globals block there.
 - The project is TypeScript (strict) since 2026-10-22. `typescript-eslint`
-  does not support TypeScript 7 yet — the pinned major is **6**.
+  does not support TypeScript 7 yet (verified 2026-10-23: 8.72.0 declares
+  `typescript >=4.8.4 <6.1.0`; TS7 = native tsgo, no compiler API for
+  typescript-eslint, tracked upstream as typescript-eslint#12518) — the
+  pinned major is **6**.
   `src/types/` holds hand-written declarations for the two packages that
   ship none (`webextension-polyfill`, `turndown-plugin-gfm`).
 - `globalThis.__vitest_worker__` and `window.happyDOM` are declared in
