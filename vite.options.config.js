@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => ({
         emptyOutDir: false,
         sourcemap: mode !== 'production',
         rollupOptions: {
-            input: path.resolve(__dirname, 'src/options.html'),
+            input: path.resolve(import.meta.dirname, 'src/options.html'),
             output: {
                 entryFileNames: 'options.js',
                 assetFileNames: (assetInfo) => {
@@ -29,8 +29,8 @@ export default defineConfig(({ mode }) => ({
                     (k) => k.includes('/options.html') || k.includes('\\options.html')
                 );
                 if (srcKey && srcKey !== 'options.html') {
-                    const srcPath = path.resolve(__dirname, 'dist', srcKey);
-                    const destPath = path.resolve(__dirname, 'dist', 'options.html');
+                    const srcPath = path.resolve(import.meta.dirname, 'dist', srcKey);
+                    const destPath = path.resolve(import.meta.dirname, 'dist', 'options.html');
                     if (fs.existsSync(srcPath)) {
                         let html = fs.readFileSync(srcPath, 'utf-8');
                         html = html.replace(/src="\.\.\//g, 'src="./');
