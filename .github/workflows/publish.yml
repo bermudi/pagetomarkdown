@@ -6,6 +6,14 @@ name: Publish to AMO
 #   2. git tag v4.1.2 && git push origin v4.1.2
 #   3. This workflow builds, lints, and signs the add-on with AMO
 #
+# Release design (issue #30): web-ext's built-in approval polling (1 request/s,
+# fresh JWT each) is throttled by AMO with a misleading 401 "JWT exp is too
+# long" (mozilla/web-ext#3572). So this workflow only UPLOADS with
+# `--approval-timeout 0` (web-ext still polls upload validation at 1 Hz, but
+# that takes seconds), then gates the GitHub Release on polling the public
+# AMO API (1 request/15s) for the new current_version, and downloads the
+# public XPI from there.
+#
 # Required GitHub Secrets (Settings → Secrets → Actions):
 #   AMO_JWT_ISSUER  - API key (JWT issuer) from https://addons.mozilla.org/developers/addon/api/key/
 #   AMO_JWT_SECRET  - API secret (JWT secret) from the same page
@@ -25,6 +33,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      AMO_ADDON_API_URL: https://addons.mozilla.org/api/v5/addons/addon/page-to-markdown/
+      AMO_MANAGE_URL: https://addons.mozilla.org/en-US/developers/addon/page-to-markdown/
     steps:
       - uses: actions/checkout@v4
 
@@ -54,26 +65,170 @@ jobs:
 
       - name: Lint extension
         # Uses the shared ignore list in web-ext-config.mjs — the same lint
-        # CI runs on every push.
-        run: npx --yes web-ext lint --source-dir .
+        # CI runs on every push. web-ext is pinned in devDependencies.
+        run: pnpm exec web-ext lint --source-dir .
 
-      - name: Sign and publish to AMO
+      - name: Resolve release version
+        id: version
+        env:
+          # Via env (not inline ${{ }}) so tag metacharacters can never hit the shell.
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          # Which tag are we releasing, if any? Tag pushes carry it in the
+          # ref, release events in the payload. workflow_dispatch (branch
+          # ref) releases whatever package.json holds.
+          TAG_REF=
+          case "$EVENT_NAME" in
+            push)
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                TAG_REF=${GITHUB_REF#refs/tags/}
+              fi
+              ;;
+            release) TAG_REF=$RELEASE_TAG_NAME ;;
+          esac
+          # The trigger glob v*.*.* also matches tags like v4.7.2-rc1, and
+          # releases can carry any tag. A version-shaped tag that is not
+          # strict vX.Y.Z would silently fall back to package.json below —
+          # fail it instead. Non-version tags (a hand-made "nightly" release)
+          # keep the package.json fallback.
+          if [ -n "$TAG_REF" ] && [[ "$TAG_REF" =~ ^v[0-9] ]] \
+              && ! [[ "$TAG_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG_REF' is not strict vX.Y.Z — the poll matches AMO version strings exactly. Use an exact version tag."
+            exit 1
+          fi
+          PKG_VERSION=$(jq -r .version package.json)
+          TAG_VERSION=
+          if [[ "$TAG_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG_VERSION=${TAG_REF#v}
+          fi
+          if [ -n "$TAG_VERSION" ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION. Tag the release commit, then push the tag."
+            exit 1
+          fi
+          VERSION=${TAG_VERSION:-$PKG_VERSION}
+          echo "Releasing $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and upload to AMO (no approval wait)
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+          set -euo pipefail
+          if [ -z "${WEB_EXT_API_KEY:-}" ] || [ -z "${WEB_EXT_API_SECRET:-}" ]; then
             echo "::error::Missing AMO secrets. Add AMO_JWT_ISSUER and AMO_JWT_SECRET in GitHub Settings → Secrets → Actions"
             exit 1
           fi
-          # --channel listed = public listing on AMO
+
+          # Already public on AMO? AMO versions are immutable — signing the
+          # same string again can only 409. Skipping is right for a re-run
+          # (attempt >1, or the GitHub Release already exists — including one
+          # published by hand, which is what re-triggered this workflow). A
+          # FRESH push of an already-released version means someone forgot to
+          # bump package.json; fail instead of re-releasing AMO's old XPI.
+          CURRENT=$(curl -fsSL --max-time 30 "$AMO_ADDON_API_URL" | jq -r '.current_version.version // empty') || CURRENT=
+          if [ "$CURRENT" = "$VERSION" ]; then
+            RERUN=0
+            if [ "${RUN_ATTEMPT:-1}" -gt 1 ]; then
+              RERUN=1
+            elif gh release view "v$VERSION" >/dev/null 2>&1; then
+              RERUN=1
+            fi
+            if [ "$RERUN" -eq 1 ]; then
+              echo "$VERSION is already public on AMO and this is a re-run — skipping sign."
+              echo "⚠️ $VERSION was already public on AMO — the XPI attached below is AMO's existing artifact, not a new upload." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::$VERSION is already public on AMO and this is a fresh push, so it cannot be uploaded again. Bump package.json, commit, tag the new version."
+            exit 1
+          fi
+
+          # --channel listed = public listing on AMO.
           # Packages exactly manifest + dist + icons: the shared ignore list
           # lives in web-ext-config.mjs (mirrors build_zip.sh, and is the
           # same list CI lints with on every push).
-          npx --yes web-ext sign \
+          # --approval-timeout 0 = upload only; AMO auto-approves listed
+          # add-ons on its own, and the next step watches for that without
+          # the polling pattern AMO throttles.
+          set +e
+          pnpm exec web-ext sign \
             --source-dir . \
             --artifacts-dir web-ext-artifacts \
-            --channel listed
+            --channel listed \
+            --approval-timeout 0 2>&1 | tee web-ext-sign-output.log
+          SIGN_STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$SIGN_STATUS" -eq 0 ]; then
+            # web-ext prints the AMO edit URL on the skip-approval path.
+            EDIT_URL=$(grep -oE 'https://addons\.mozilla\.org/[^ ]+' web-ext-sign-output.log | tail -1) || true
+            if [ -n "$EDIT_URL" ]; then
+              echo "AMO version page: $EDIT_URL"
+              echo "Submitted to AMO — review status: $EDIT_URL" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          # Re-run after a partial submit: AMO keeps the version it already
+          # has (immutable version strings) and answers the PUT with 409
+          # Conflict "… already exists". Nothing to redo — the publish poll
+          # below is the arbiter. Match any 409/conflict wording, not just
+          # the exact sentence, so a rephrased AMO cannot resurrect the bug.
+          if grep -Eqi '409|conflict' web-ext-sign-output.log; then
+            echo "AMO answered the submit with a conflict (the version already exists there) — continuing to the publish poll."
+            echo "⚠️ AMO already had version $VERSION (e.g. an earlier partial run) — the XPI attached below is AMO's existing artifact, not this build." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # The AMO throttling 401 from mozilla/web-ext#3572: the upload was
+          # accepted server-side; the failure is web-ext's own polling. Let
+          # the publish poll decide.
+          if grep -q 'JWT exp' web-ext-sign-output.log; then
+            echo "AMO throttled web-ext's polling (the JWT-exp 401, see #30) — upload already accepted, continuing."
+            exit 0
+          fi
+          exit "$SIGN_STATUS"
+
+      - name: Poll AMO until the version is public, download XPI
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for AMO to make $VERSION public (poll every 15s, give up after 15 min)…"
+          CURRENT=
+          DEADLINE=$((SECONDS + 900))
+          while :; do
+            JSON=$(curl -fsSL --max-time 30 "$AMO_ADDON_API_URL") || JSON=
+            if [ -n "$JSON" ]; then
+              CURRENT=$(jq -r '.current_version.version // empty' <<<"$JSON")
+              if [ "$CURRENT" = "$VERSION" ]; then
+                FILE_URL=$(jq -r '.current_version.file.url // empty' <<<"$JSON")
+                if [ -z "$FILE_URL" ]; then
+                  echo "::error::AMO reports $VERSION as public but exposes no file URL — check $AMO_MANAGE_URL"
+                  exit 1
+                fi
+                FILENAME=$(basename "$FILE_URL")
+                mkdir -p web-ext-artifacts
+                curl -fsSL --retry 3 --retry-delay 5 -o "web-ext-artifacts/$FILENAME" "$FILE_URL"
+                echo "AMO is serving $VERSION: $FILE_URL"
+                {
+                  echo "* AMO listing: https://addons.mozilla.org/firefox/addon/page-to-markdown/"
+                  echo "* XPI: $FILE_URL"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::AMO did not make $VERSION public within 15 minutes (current: ${CURRENT:-unknown}). If review is manual, finish it at $AMO_MANAGE_URL and re-run this job — a re-run is safe (the upload is skipped or tolerated)."
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Upload signed XPI artifact
         uses: actions/upload-artifact@v4

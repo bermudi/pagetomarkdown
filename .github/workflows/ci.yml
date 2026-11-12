@@ -51,7 +51,8 @@ jobs:
       - name: Lint extension (web-ext)
         # The ignore list lives in web-ext-config.mjs and is shared with the
         # publish workflow, so this is exactly the lint a release gets.
-        run: npx --yes web-ext lint --source-dir .
+        # web-ext is pinned in devDependencies.
+        run: pnpm exec web-ext lint --source-dir .
 
   # Installs the extension in Firefox, clicks its toolbar button on a real
   # page and checks the downloaded file. ubuntu-22.04 on purpose: Ubuntu
