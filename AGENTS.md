@@ -166,7 +166,7 @@ script → file on disk.
 
 - Firefox temp add-ons (about:debugging) do not inject content scripts into
   tabs opened before loading — F5 the tab after (re)loading the add-on.
-- Smoke-test loop: `pnpm dlx web-ext run --source-dir . --firefox
+- Smoke-test loop: `pnpm exec web-ext run --source-dir . --firefox
   /usr/bin/firefox-developer-edition --no-input --start-url <url>` —
   throws up Dev Edition on a throwaway profile with the add-on from
   `dist/` and auto-reloads on file changes. Run `pnpm build` first. The
@@ -183,6 +183,14 @@ script → file on disk.
 - `pnpm lint && pnpm test && pnpm run typecheck && pnpm build` must pass before
   commits; `eslint.config.js` lists browser globals explicitly (add new ones
   there). Test files run in Node, so they get their own globals block there.
+- web-ext is a pinned devDependency — run it as `pnpm exec web-ext …` so CI,
+  publish and local runs use the same version. Releases never use web-ext's
+  approval polling: `sign --approval-timeout 0` only uploads, then
+  publish.yml polls the public AMO API for the new `current_version` and
+  downloads the public XPI. AMO throttles web-ext's 1 Hz approval poll with
+  a misleading `401 JWT exp (expiration) is too long` (mozilla/web-ext#3572,
+  issue #30); resubmitting the same version string 409s, so the workflow
+  skips sign when the version is already on AMO and tolerates that 409.
 - The project is TypeScript (strict) since 2026-10-22. `typescript-eslint`
   does not support TypeScript 7 yet (verified 2026-10-23: 8.72.0 declares
   `typescript >=4.8.4 <6.1.0`; TS7 = native tsgo, no compiler API for
