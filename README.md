@@ -52,7 +52,7 @@ Page to Markdown is a Firefox extension that converts the current page into **cl
    - Reads `debugLogging` from storage to gate diagnostics (`this.log()`).
    - Tries `tryExtractYouTubeTranscript()` first (YouTube watch pages) — fetches fresh caption tracks via the `youtubei/v1/player` ANDROID client, falls back to inline `ytInitialPlayerResponse` parsing, and finally clicks "Show transcript" in the page UI itself and scrapes the rendered panel (YouTube returns empty bodies for caption URLs that lack a proof-of-origin token, so the page's own attested transcript machinery is often the only working path).
    - Else tries Claude.ai conversation transcript (`claude.ai`/`claude.com` chat `transcript-row` messages), Poe conversation transcript (`poe.com` chat messages) and Reddit thread extractor (`old.reddit.com` via `#siteTable .thing.link`; modern `shreddit` UI falls through).
-   - Else clones `document.body`, runs `preserveActiveTabs`, prunes invisible chrome (`pruneNoiseElements`), passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks or returns a near-empty selection.
+   - Else clones `document.body`, runs `preserveActiveTabs`, trims infinite-feed articles (`trimFeedArticles` — on pages that stream the *next* articles below the opened one, e.g. newrepublic.com, every loaded `<article>` whose share-intent links advertise a *different* post URL is dropped; the article sharing the page's own URL is the one being read), prunes invisible chrome (`pruneNoiseElements`), passes a synthetic document to `Defuddle` (`defuddle.parse()`), with a hybrid fallback if defuddle drops `pre` blocks or returns a near-empty selection.
    - Keeps the result as **one** content object (`{ element, html, kind }`): the markdown and the word count are both derived from it, so they can never describe different documents.
    - Collects metadata from `defuddle` result + meta tags.
    - Converts the resulting HTML to Markdown via `TurndownService` + GFM, after `normalizeContentHtml` preprocessing (mermaid SVG → `pre.language-mermaid`, compressed tables → real `<table>`, `pre` → normalized `code` with language).
@@ -122,6 +122,7 @@ For auditing, the main logic lives in:
   - `compressedTables.ts` — tables compressed into a code block
   - `metadata.ts` — frontmatter metadata
   - `redditExtractor.ts`, `claudeExtractor.ts`, `poeExtractor.ts` — site-specific extractors
+  - `feed.ts` — infinite-feed trim: drops `<article>` siblings that self-identify as different posts via their share-intent links
   - `tabState.ts` — keeps only the active tab's panels
   - `youtubeTranscript.ts` — YouTube transcripts
 - `dist/` — bundled output from Vite (see `vite.*.config.js`)

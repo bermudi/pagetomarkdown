@@ -8,6 +8,7 @@ import {
     rescueMissingDiagrams
 } from './lib/mermaid';
 import { extractRedditThread } from './lib/redditExtractor';
+import { trimFeedArticles } from './lib/feed';
 import { pruneNoiseElements } from './lib/noise';
 import { detectLanguageForPre } from './lib/codeBlocks';
 import { extractMetadata } from './lib/metadata';
@@ -150,6 +151,13 @@ export class AdvancedMarkdownConverter {
 
         const originalBodyClone = document.body.cloneNode(true) as HTMLElement;
         const tabStateResult = this.preserveInteractiveState(originalBodyClone);
+        // Infinite-feed pages carry the next articles below the one being
+        // read; drop them before defuddle can score the wrapper that holds
+        // them all. Must run before pruneNoiseElements — it reads the share
+        // links that pass removes.
+        const feedTrim = trimFeedArticles(originalBodyClone, window.location.href, (...args) =>
+            this.log(...args)
+        );
         const prunedNoise = pruneNoiseElements(originalBodyClone, (...args) => this.log(...args));
         const originalPreCount = originalBodyClone.querySelectorAll('pre').length;
 
@@ -159,7 +167,7 @@ export class AdvancedMarkdownConverter {
             const defuddle = new Defuddle(defuddleInput, { url: window.location.href });
             const result = defuddle.parse();
             this.defuddleResult = result;
-            this.log('Interactive-state preprocessing complete', { ...tabStateResult, prunedNoise });
+            this.log('Interactive-state preprocessing complete', { ...tabStateResult, feedTrim, prunedNoise });
 
             const parsedBody = this.parseContentFragment(result?.content);
             if (parsedBody && this.isSubstantiveExtraction(parsedBody, originalBodyClone)) {

@@ -9,7 +9,9 @@
 
 // Links whose only destination is a share/bookmark endpoint carry no article
 // content (issue #24: Hackaday's share icons leaked into the markdown).
-const SHARE_HREF_PATTERN =
+// Feed trimming (feed.ts) reads these same hrefs *before* they are pruned
+// to learn each <article>'s own URL.
+export const SHARE_HREF_PATTERN =
     /facebook\.com\/shar|(?:twitter\.com|x\.com)\/(?:intent|share)|linkedin\.com\/shar|reddit\.com\/submit|news\.ycombinator\.com\/submitlink|pinterest\.[a-z.]+\/pin\/create|bsky\.app\/intent|(?:api\.)?whatsapp\.com\/send|wa\.me\/|(?:t|telegram)\.me\/share|buffer(?:app)?\.com\/add|mailto:\s*\?/i;
 
 // Tracking pixels / analytics beacons. Defuddle's small-image pass needs

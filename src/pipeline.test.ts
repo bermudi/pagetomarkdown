@@ -104,4 +104,24 @@ describe('core conversion pipeline (golden files)', () => {
     expect(markdown).not.toContain('@keyframes');
     expectGolden('deepwiki', markdown);
   });
+
+  // Real newrepublic.com article page (issue #28), captured from a live
+  // browser with four infinite-feed articles loaded below the real one.
+  // The real article is the one whose share links embed the page URL; the
+  // other posts each advertise a different URL and must not survive.
+  it('saves only the opened article on an infinite-feed page', () => {
+    const markdown = runFixture(converter, {
+      file: 'newrepublic-feed.html',
+      url: 'https://newrepublic.com/post/217863/white-house-warns-democrats-investigations-crime',
+      mode: 'page'
+    });
+    expect(markdown).toContain('White House is threatening Democrats');
+    expect(markdown).toContain('thinks of itself as above the law');
+    // The four feed articles below the opened one.
+    expect(markdown).not.toContain('tank');
+    expect(markdown).not.toContain('Van Hollen');
+    expect(markdown).not.toContain('Rahman');
+    expect(markdown).not.toContain('whistleblowers');
+    expectGolden('newrepublic-feed', markdown);
+  });
 });
