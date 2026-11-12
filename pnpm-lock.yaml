@@ -1143,8 +1143,8 @@ packages:
   graceful-fs@4.2.10:
     resolution: {integrity: sha512-9ByhssR2fPVsNZj478qUUbKfmL0+t5BDVyjShtyZZLiK7ZDAArFFfopyOTj0M05wE2tJPisA4iTnnXl2YoPvOA==}
 
-  graceful-fs@4.2.12:
-    resolution: {integrity: sha512-iuyGF2E4oafQfPsRrG2wtY2ILupMhvtdrhzrxB+0VcjsPpSPttpfYdjnGFGsTi5MaJFjI1jOKHPQ6UTbTj9TAw==}
+  graceful-fs@4.2.11:
+    resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
   happy-dom@21.0.4:
     resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
@@ -2787,7 +2787,7 @@ snapshots:
     dependencies:
       atomically: 2.1.1
       dot-prop: 9.0.0
-      graceful-fs: 4.2.12
+      graceful-fs: 4.2.11
       xdg-basedir: 5.1.0
 
   core-util-is@1.0.3: {}
@@ -3159,7 +3159,7 @@ snapshots:
 
   fs-extra@11.4.1:
     dependencies:
-      graceful-fs: 4.2.12
+      graceful-fs: 4.2.11
       jsonfile: 6.2.1
       universalify: 2.0.1
 
@@ -3189,7 +3189,7 @@ snapshots:
 
   graceful-fs@4.2.10: {}
 
-  graceful-fs@4.2.12: {}
+  graceful-fs@4.2.11: {}
 
   happy-dom@21.0.4:
     dependencies:
@@ -3329,7 +3329,7 @@ snapshots:
     dependencies:
       universalify: 2.0.1
     optionalDependencies:
-      graceful-fs: 4.2.12
+      graceful-fs: 4.2.11
 
   jsonwebtoken@9.0.3:
     dependencies:
@@ -3935,7 +3935,7 @@ snapshots:
 
   watchpack@2.5.2:
     dependencies:
-      graceful-fs: 4.2.12
+      graceful-fs: 4.2.11
 
   wcwidth@1.0.1:
     dependencies:

@@ -9,7 +9,8 @@ name: Publish to AMO
 # Release design (issue #30): web-ext's built-in approval polling (1 request/s,
 # fresh JWT each) is throttled by AMO with a misleading 401 "JWT exp is too
 # long" (mozilla/web-ext#3572). So this workflow only UPLOADS with
-# `--approval-timeout 0`, then gates the GitHub Release on polling the public
+# `--approval-timeout 0` (web-ext still polls upload validation at 1 Hz, but
+# that takes seconds), then gates the GitHub Release on polling the public
 # AMO API (1 request/15s) for the new current_version, and downloads the
 # public XPI from there.
 #
@@ -69,16 +70,39 @@ jobs:
 
       - name: Resolve release version
         id: version
+        env:
+          # Via env (not inline ${{ }}) so tag metacharacters can never hit the shell.
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          # Which tag are we releasing, if any? Tag pushes carry it in the
+          # ref, release events in the payload. workflow_dispatch (branch
+          # ref) releases whatever package.json holds.
+          TAG_REF=
+          case "$EVENT_NAME" in
+            push)
+              if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+                TAG_REF=${GITHUB_REF#refs/tags/}
+              fi
+              ;;
+            release) TAG_REF=$RELEASE_TAG_NAME ;;
+          esac
+          # The trigger glob v*.*.* also matches tags like v4.7.2-rc1, and
+          # releases can carry any tag. A version-shaped tag that is not
+          # strict vX.Y.Z would silently fall back to package.json below —
+          # fail it instead. Non-version tags (a hand-made "nightly" release)
+          # keep the package.json fallback.
+          if [ -n "$TAG_REF" ] && [[ "$TAG_REF" =~ ^v[0-9] ]] \
+              && ! [[ "$TAG_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG_REF' is not strict vX.Y.Z — the poll matches AMO version strings exactly. Use an exact version tag."
+            exit 1
+          fi
           PKG_VERSION=$(jq -r .version package.json)
-          # Tag pushes carry vX.Y.Z in the ref; a release event carries it in
-          # the release payload. workflow_dispatch may have neither — then
-          # package.json is the truth.
-          REF_NAME='${{ github.event.release.tag_name || github.ref_name }}'
           TAG_VERSION=
-          if [[ "$REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION=${REF_NAME#v}
+          if [[ "$TAG_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG_VERSION=${TAG_REF#v}
           fi
           if [ -n "$TAG_VERSION" ] && [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION. Tag the release commit, then push the tag."
@@ -92,6 +116,8 @@ jobs:
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
@@ -100,13 +126,27 @@ jobs:
             exit 1
           fi
 
-          # Already public on AMO? (Re-run after success, or a GitHub Release
-          # published by hand re-triggering this workflow.) Re-signing the
-          # same version string would fail with 409 — skip straight to it.
+          # Already public on AMO? AMO versions are immutable — signing the
+          # same string again can only 409. Skipping is right for a re-run
+          # (attempt >1, or the GitHub Release already exists — including one
+          # published by hand, which is what re-triggered this workflow). A
+          # FRESH push of an already-released version means someone forgot to
+          # bump package.json; fail instead of re-releasing AMO's old XPI.
           CURRENT=$(curl -fsSL --max-time 30 "$AMO_ADDON_API_URL" | jq -r '.current_version.version // empty') || CURRENT=
           if [ "$CURRENT" = "$VERSION" ]; then
-            echo "$VERSION is already public on AMO — skipping sign."
-            exit 0
+            RERUN=0
+            if [ "${RUN_ATTEMPT:-1}" -gt 1 ]; then
+              RERUN=1
+            elif gh release view "v$VERSION" >/dev/null 2>&1; then
+              RERUN=1
+            fi
+            if [ "$RERUN" -eq 1 ]; then
+              echo "$VERSION is already public on AMO and this is a re-run — skipping sign."
+              echo "⚠️ $VERSION was already public on AMO — the XPI attached below is AMO's existing artifact, not a new upload." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::$VERSION is already public on AMO and this is a fresh push, so it cannot be uploaded again. Bump package.json, commit, tag the new version."
+            exit 1
           fi
 
           # --channel listed = public listing on AMO.
@@ -136,10 +176,13 @@ jobs:
           fi
 
           # Re-run after a partial submit: AMO keeps the version it already
-          # has and refuses a resubmit of the same string. Nothing to redo —
-          # the publish poll below is the arbiter.
-          if grep -q 'already exists' web-ext-sign-output.log; then
-            echo "Version $VERSION was already uploaded to AMO — continuing to the publish poll."
+          # has (immutable version strings) and answers the PUT with 409
+          # Conflict "… already exists". Nothing to redo — the publish poll
+          # below is the arbiter. Match any 409/conflict wording, not just
+          # the exact sentence, so a rephrased AMO cannot resurrect the bug.
+          if grep -Eqi '409|conflict' web-ext-sign-output.log; then
+            echo "AMO answered the submit with a conflict (the version already exists there) — continuing to the publish poll."
+            echo "⚠️ AMO already had version $VERSION (e.g. an earlier partial run) — the XPI attached below is AMO's existing artifact, not this build." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           # The AMO throttling 401 from mozilla/web-ext#3572: the upload was
@@ -151,7 +194,7 @@ jobs:
           fi
           exit "$SIGN_STATUS"
 
-      - name: Wait for AMO to publish, download public XPI
+      - name: Poll AMO until the version is public, download XPI
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -165,6 +208,10 @@ jobs:
               CURRENT=$(jq -r '.current_version.version // empty' <<<"$JSON")
               if [ "$CURRENT" = "$VERSION" ]; then
                 FILE_URL=$(jq -r '.current_version.file.url // empty' <<<"$JSON")
+                if [ -z "$FILE_URL" ]; then
+                  echo "::error::AMO reports $VERSION as public but exposes no file URL — check $AMO_MANAGE_URL"
+                  exit 1
+                fi
                 FILENAME=$(basename "$FILE_URL")
                 mkdir -p web-ext-artifacts
                 curl -fsSL --retry 3 --retry-delay 5 -o "web-ext-artifacts/$FILENAME" "$FILE_URL"
@@ -177,7 +224,7 @@ jobs:
               fi
             fi
             if [ "$SECONDS" -ge "$DEADLINE" ]; then
-              echo "::error::AMO did not make $VERSION public within 15 minutes (current: ${CURRENT:-unknown}). If review is manual, finish it at $AMO_MANAGE_URL and re-run this job — the re-run skips the upload."
+              echo "::error::AMO did not make $VERSION public within 15 minutes (current: ${CURRENT:-unknown}). If review is manual, finish it at $AMO_MANAGE_URL and re-run this job — a re-run is safe (the upload is skipped or tolerated)."
               exit 1
             fi
             sleep 15

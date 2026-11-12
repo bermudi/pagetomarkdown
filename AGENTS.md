@@ -190,7 +190,14 @@ script → file on disk.
   downloads the public XPI. AMO throttles web-ext's 1 Hz approval poll with
   a misleading `401 JWT exp (expiration) is too long` (mozilla/web-ext#3572,
   issue #30); resubmitting the same version string 409s, so the workflow
-  skips sign when the version is already on AMO and tolerates that 409.
+  skips sign on re-runs when the version is already on AMO and tolerates
+  that 409.
+- CI's pnpm 11 enforces a 24h `minimumReleaseAge` (supply-chain default);
+  a local pnpm with the policy off can resolve a dep published minutes ago,
+  and CI then reds at `pnpm install --frozen-lockfile`. Fix with
+  `pnpm --config.minimum-release-age=1440 update <pkg>` — it re-resolves
+  just that package to the newest allowed version (lockfile surgery by
+  hand is forbidden anyway).
 - The project is TypeScript (strict) since 2026-10-22. `typescript-eslint`
   does not support TypeScript 7 yet (verified 2026-10-23: 8.72.0 declares
   `typescript >=4.8.4 <6.1.0`; TS7 = native tsgo, no compiler API for
