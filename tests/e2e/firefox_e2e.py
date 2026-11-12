@@ -50,8 +50,40 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
+class FixtureRewriteHandler(QuietHandler):
+    """Serve newrepublic-feed.html with its self-share URLs rewritten.
+
+    The trim compares each article's share-embedded URL against the page's
+    own location, so a fixture served from 127.0.0.1 must share 127.0.0.1
+    URLs — both the raw spelling (social intents) and the percent-encoded
+    one (reddit/mailto). Everything else is the untouched page capture.
+    """
+
+    REAL_URL = "https://newrepublic.com/post/217863/white-house-warns-democrats-investigations-crime"
+
+    def do_GET(self):  # noqa: D102
+        if not self.path.endswith("newrepublic-feed.html"):
+            super().do_GET()
+            return
+        from urllib.parse import quote
+
+        port = self.server.server_address[1]
+        local_url = f"http://127.0.0.1:{port}{self.path}"
+        body = (REPO / "tests/fixtures/pipeline/newrepublic-feed.html").read_bytes()
+        body = body.replace(
+            self.REAL_URL.encode(), local_url.encode()
+        ).replace(
+            quote(self.REAL_URL, safe="").encode(), quote(local_url, safe="").encode()
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 def start_server() -> tuple[socketserver.TCPServer, int]:
-    handler = lambda *a, **kw: QuietHandler(*a, directory=str(REPO), **kw)  # noqa: E731
+    handler = lambda *a, **kw: FixtureRewriteHandler(*a, directory=str(REPO), **kw)  # noqa: E731
     httpd = socketserver.TCPServer(("127.0.0.1", 0), handler)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -223,6 +255,23 @@ SCENARIOS = [
             "post body present": lambda text: "borrow checker is the reason" in text,
             "comments present": lambda text: "refuses to let me write the bug" in text,
             "not a title-only file": lambda text: len(text.strip()) > 400,
+        },
+    },
+    {
+        # Real newrepublic.com capture with four infinite-feed articles loaded
+        # below the opened one (issue #28). The handler rewrites the page's
+        # self-share URLs to the serving origin so the trim can recognize
+        # the opened article; the feed posts share different URLs and must
+        # not make it into the file.
+        "name": "newrepublic infinite feed",
+        "page": "tests/fixtures/pipeline/newrepublic-feed.html",
+        "checks": {
+            "frontmatter present": lambda text: text.startswith("---\n"),
+            "opened article present": lambda text: "thinks of itself as above the law" in text,
+            "feed article 1 absent": lambda text: "Frederica Wilson" not in text,
+            "feed article 2 absent": lambda text: "Van Hollen" not in text,
+            "feed article 3 absent": lambda text: "Rahman" not in text,
+            "feed article 4 absent": lambda text: "whistleblowers" not in text,
         },
     },
 ]

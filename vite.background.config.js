@@ -10,11 +10,6 @@ export default defineConfig(({ mode }) => ({
             name: 'PageToMarkdownBackground',
             formats: ['iife'],
             fileName: () => 'background.js'
-        },
-        rollupOptions: {
-            output: {
-                inlineDynamicImports: true
-            }
         }
     }
 }));

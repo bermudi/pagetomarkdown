@@ -10,11 +10,6 @@ export default defineConfig(({ mode }) => ({
             name: 'PageToMarkdownContent',
             formats: ['iife'],
             fileName: () => 'content.js'
-        },
-        rollupOptions: {
-            output: {
-                inlineDynamicImports: true
-            }
         }
     }
 }));
