@@ -32,7 +32,7 @@ export interface DefuddleMetadata {
     wordCount?: number;
 }
 
-function getMeta(doc: Document | null, names: string[]): string | null {
+export function getMeta(doc: Document | null, names: string[]): string | null {
     if (!doc) return null;
     for (const name of names) {
         const el = doc.querySelector<HTMLMetaElement>(`meta[name="${name}"], meta[property="${name}"]`);

@@ -433,6 +433,77 @@ describe('AdvancedMarkdownConverter - core pipeline', () => {
       });
     });
 
+    describe('extractMainContent integration (UnWall reader)', () => {
+      it('uses the same-origin article iframe instead of the outer UnWall shell', () => {
+        const originalBody = document.body.innerHTML;
+        const originalTitle = document.title;
+        const originalUrl = window.location.href;
+        const addedMeta: HTMLMetaElement[] = [];
+        try {
+          window.happyDOM?.setURL(
+            'https://unwall.app/www.wsj.com/business/nvidia-jensen-huang-white-house-9ad03961'
+          );
+          document.title = 'UnWall | Read Full Articles Without Paywalls';
+          for (const [property, content] of [
+            ['og:title', 'UnWall | Read Full Articles Without Paywalls'],
+            ['og:site_name', 'UnWall']
+          ]) {
+            const meta = document.createElement('meta');
+            meta.setAttribute('property', property);
+            meta.setAttribute('content', content);
+            document.head.appendChild(meta);
+            addedMeta.push(meta);
+          }
+          document.body.innerHTML = `
+            <main>
+              <h2>How it works</h2>
+              <p>UnWall layers several bypass techniques and applies the best mix per site.</p>
+              <p>No ads. No overlays.</p>
+            </main>
+          `;
+
+          const frame = document.createElement('iframe');
+          frame.setAttribute('title', 'Article content');
+          frame.setAttribute(
+            'srcdoc',
+            `<!doctype html><html><head>
+              <title>The Frantic White House Push to Get Jensen Huang Back - WSJ</title>
+              <meta property="og:title" content="The Frantic White House Push to Get Jensen Huang Back">
+              <meta property="og:site_name" content="The Wall Street Journal">
+              <meta name="author" content="Amrith Ramkumar, Josh Dawsey">
+              <meta property="og:description" content="Trump made clear he wanted the Nvidia CEO reinstated.">
+            </head><body>
+              <article>
+                <h1>The Frantic White House Push to Get Jensen Huang Back</h1>
+                <p>Trump made clear he wanted the Nvidia CEO reinstated.</p>
+                <p>WASHINGTON—The artificial-intelligence boom that had powered the market became a political priority.</p>
+              </article>
+            </body></html>`
+          );
+          document.body.appendChild(frame);
+
+          const result = converter.extractMainContent();
+          const metadata = converter.extractMetadata(result);
+          const markdown = converter.convertToMarkdown(result);
+
+          expect(result.kind).toBe('unwall');
+          expect(markdown).toContain('The Frantic White House Push to Get Jensen Huang Back');
+          expect(markdown).toContain('political priority');
+          expect(markdown).not.toContain('How it works');
+          expect(markdown).not.toContain('No ads. No overlays');
+          expect(metadata.title).toBe('The Frantic White House Push to Get Jensen Huang Back');
+          expect(metadata.author).toBe('Amrith Ramkumar, Josh Dawsey');
+          expect(metadata.source).toBe('The Wall Street Journal');
+          expect(metadata.description).toBe('Trump made clear he wanted the Nvidia CEO reinstated.');
+        } finally {
+          for (const meta of addedMeta) meta.remove();
+          window.happyDOM?.setURL(originalUrl);
+          document.body.innerHTML = originalBody;
+          document.title = originalTitle;
+        }
+      });
+    });
+
     describe('extractMainContent integration (claude.ai conversation)', () => {
       it('extracts the full conversation, not just the first message', () => {
         const originalBody = document.body.innerHTML;
