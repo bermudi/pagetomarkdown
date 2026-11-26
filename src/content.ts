@@ -8,6 +8,7 @@ import {
     rescueMissingDiagrams
 } from './lib/mermaid';
 import { extractRedditThread } from './lib/redditExtractor';
+import { extractUnwallArticle } from './lib/unwallExtractor';
 import { trimFeedArticles } from './lib/feed';
 import { pruneNoiseElements } from './lib/noise';
 import { detectLanguageForPre } from './lib/codeBlocks';
@@ -113,6 +114,18 @@ export class AdvancedMarkdownConverter {
      * @returns {{element: Element, html: string, kind: string, wordCount?: number}}
      */
     extractMainContent() {
+        const unwallArticle = extractUnwallArticle(document);
+        if (unwallArticle?.article) {
+            this.log('Using UnWall article extractor');
+            this.metadataOverrides = unwallArticle.metadataOverrides ?? null;
+            this.defuddleResult = null;
+            return {
+                element: unwallArticle.article,
+                html: unwallArticle.article.outerHTML || '',
+                kind: 'unwall'
+            };
+        }
+
         const claudeConversation = extractClaudeConversation(document);
         if (claudeConversation?.article) {
             this.log('Using Claude conversation extractor');
